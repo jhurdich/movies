@@ -10,7 +10,9 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const TMDB_READ_TOKEN = process.env.TMDB_READ_TOKEN || '';
 const publicDir = path.join(__dirname, 'public');
 const send = (res, status, value) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(value)); };
+const fail = (message,status) => Object.assign(new Error(message),{status});
 const ids = (a) => [...new Set((Array.isArray(a)?a:[]).map(x=>Number(typeof x==='object'?x.id:x)).filter(x=>Number.isSafeInteger(x)&&x>0))].slice(0,100);
+const cleanGenres = a => {const result=ids(a);if(Array.isArray(a)&&a.includes('coming-of-age'))result.push('coming-of-age');return result};
 async function tmdb(endpoint, params={}) {
  if(!TMDB_API_KEY&&!TMDB_READ_TOKEN) throw Object.assign(new Error('Movie data is not configured. Set a TMDB credential on the server.'),{status:503});
  const url=new URL(BASE+endpoint); for(const [k,v] of Object.entries(params)) if(v!==undefined&&v!=='') url.searchParams.set(k,String(v));
@@ -23,8 +25,8 @@ function sanitizedProfile(value) {
  const v=value&&typeof value==='object'?value:{};
  const watched=(Array.isArray(v.watched)?v.watched:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
  const ratings={};for(const [k,n] of Object.entries(v.ratings||{}).slice(0,1000)) if(/^\d{1,10}$/.test(k)&&(n===1||n===-1)) ratings[k]=n;
- const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy'].includes(x));
- return {watched,genres:ids(v.genres),providers:ids(v.providers),ratings,types};
+ const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x));
+ return {watched,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
 }
 async function profileRequest(req,method,profile) {
  if(!SUPABASE_URL||!SUPABASE_ANON_KEY) throw Object.assign(new Error('Account storage is not configured.'),{status:503});
@@ -40,19 +42,104 @@ async function profileRequest(req,method,profile) {
  const rows=await r.json();return rows.length ? sanitizedProfile(rows[0]?.profile) : null;
 }
 async function body(req){let data='';for await(const chunk of req){data+=chunk;if(data.length>100000)throw Object.assign(new Error('Request too large.'),{status:413});}try{return JSON.parse(data||'{}')}catch{throw Object.assign(new Error('Invalid JSON.'),{status:400})}}
-async function recommend(profile) {
- const p=sanitizedProfile(profile), watched=ids(p.watched), liked=Object.keys(p.ratings).filter(k=>p.ratings[k]===1).map(Number), excluded=new Set([...watched,...Object.keys(p.ratings).map(Number)]);
- const seeds=[...new Set([...liked,...watched])].slice(0,8);
- const params={language:'en-US',include_adult:'false',region:'US',watch_region:'US',sort_by:'popularity.desc',page:1};
- if(p.genres.length)params.with_genres=p.genres.join('|');if(p.providers.length)params.with_watch_providers=p.providers.join('|');if(p.types.length)params.with_watch_monetization_types=p.types.join('|');
- const calls=[tmdb('/discover/movie',params), ...seeds.map(id=>tmdb('/movie/'+id+'/recommendations',{language:'en-US',page:1}).catch(()=>({results:[]})))];
- const responses=await Promise.all(calls); const map=new Map();
- for(let i=0;i<responses.length;i++)for(const m of responses[i].results||[]){if(!m.id||excluded.has(m.id)||m.adult)continue;let o=map.get(m.id)||{movie:m,score:0};o.score+=i===0?1:(liked.includes(seeds[i-1])?4:2);map.set(m.id,o)}
- const preferences={};for(const m of p.watched)for(const g of m.genre_ids||[])preferences[g]=(preferences[g]||0)+1;
- const candidates=[...map.values()].filter(o=>!p.genres.length||o.movie.genre_ids?.some(g=>p.genres.includes(g))).map(o=>({...o,score:o.score+(o.movie.genre_ids||[]).reduce((s,g)=>s+(preferences[g]||0)*.15,0)+(Math.min(o.movie.vote_count||0,1000)/10000)})).sort((a,b)=>b.score-a.score).slice(0,32);
- const out=[];let incomplete=false;
- for(let i=0;i<candidates.length&&out.length<3;i+=8){const batch=await Promise.all(candidates.slice(i,i+8).map(async ({movie,score})=>{try {const w=await tmdb('/movie/'+movie.id+'/watch/providers');const us=w.results?.US||{};let providers=[];for(const type of ['flatrate','free','ads','rent','buy'])for(const provider of us[type]||[])if((!p.types.length||p.types.includes(type))&&(!p.providers.length||p.providers.includes(provider.provider_id))) providers.push({...provider,type});if((p.providers.length||p.types.length)&&!providers.length)return null;return {...movie,providers,watch_url:us.link||null,reason:score>2?'Related to movies you selected or liked.':'Matches your selected preferences.'};}catch{incomplete=true;return null}}));out.push(...batch.filter(Boolean).slice(0,3-out.length));}
- return {results:out,warning:incomplete?'Some availability could not be checked. Try again shortly.':out.length<3?'Fewer than three matches were found. Try selecting more services or relaxing the genre.':null};
+async function recommend(value) {
+  const p = sanitizedProfile(value);
+  const watched = ids(p.watched);
+  const liked = Object.keys(p.ratings).filter(id => p.ratings[id] === 1).map(Number);
+  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number)]);
+  const seeds = [...new Set([...liked, ...watched])].slice(0, 8);
+  const genres = p.genres.filter(Number.isSafeInteger);
+  const comingOfAge = p.genres.includes('coming-of-age');
+  const wantsTheaters = p.types.includes('theater');
+  const streamingTypes = p.types.filter(type => type !== 'theater');
+  const wantsStreaming = streamingTypes.length > 0 || !wantsTheaters;
+  const base = {language:'en-US', include_adult:'false', region:'US', sort_by:'popularity.desc', page:1};
+  if (genres.length) base.with_genres = genres.join('|');
+  if (comingOfAge) {
+    const found = await tmdb('/search/keyword', {query:'coming of age'});
+    const keyword = (found.results || []).find(item =>
+      String(item.name || '').trim().toLowerCase() === 'coming of age' &&
+      Number.isSafeInteger(item.id) && item.id > 0);
+    if (!keyword) throw fail('The coming-of-age filter is temporarily unavailable.', 503);
+    base.with_keywords = keyword.id;
+  }
+  const streamParams = {...base, watch_region:'US'};
+  if (p.providers.length) streamParams.with_watch_providers = p.providers.join('|');
+  if (streamingTypes.length) streamParams.with_watch_monetization_types = streamingTypes.join('|');
+  const [stream, nowPlaying, ...related] = await Promise.all([
+    wantsStreaming ? tmdb('/discover/movie', streamParams) : Promise.resolve({results:[]}),
+    wantsTheaters ? tmdb('/movie/now_playing', {language:'en-US', region:'US'}).catch(() => null) : Promise.resolve(null),
+    ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page:1}).catch(() => ({results:[]})))
+  ]);
+
+  let theaterResults = [];
+  let theaterUnavailable = false;
+  if (wantsTheaters) {
+    const min = nowPlaying?.dates?.minimum;
+    const max = nowPlaying?.dates?.maximum;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(min || '') && /^\d{4}-\d{2}-\d{2}$/.test(max || '')) {
+      try {
+        const current = await tmdb('/discover/movie', {...base, include_video:'false',
+          with_release_type:'2|3', 'release_date.gte':min, 'release_date.lte':max});
+        theaterResults = current.results || [];
+      } catch (_) { theaterUnavailable = true; }
+    } else theaterUnavailable = true;
+  }
+  if (theaterUnavailable && !wantsStreaming) throw fail('Theater listings are temporarily unavailable.', 503);
+
+  const theaterIds = new Set(theaterResults.map(movie => movie.id));
+  const verifiedThemeIds = new Set([...(stream.results || []), ...theaterResults].map(movie => movie.id));
+  const map = new Map();
+  function add(movie, score) {
+    if (!movie.id || excluded.has(movie.id) || movie.adult) return;
+    const current = map.get(movie.id) || {movie, score:0};
+    current.score += score;
+    map.set(movie.id, current);
+  }
+  for (const movie of stream.results || []) add(movie, 1);
+  for (const movie of theaterResults) add(movie, 1);
+  for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
+    if (comingOfAge && !verifiedThemeIds.has(movie.id)) continue;
+    if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
+    add(movie, liked.includes(seeds[i]) ? 4 : 2);
+  }
+  const preferences = {};
+  for (const movie of p.watched) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
+  const candidates = [...map.values()]
+    .filter(item => !genres.length || item.movie.genre_ids?.some(genre => genres.includes(genre)))
+    .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
+    .sort((a,b) => b.score - a.score).slice(0,32);
+
+  const out = [];
+  let incomplete = false;
+  for (let i = 0; i < candidates.length && out.length < 3; i += 8) {
+    const batch = await Promise.all(candidates.slice(i, i + 8).map(async ({movie, score}) => {
+      const inTheaters = wantsTheaters && theaterIds.has(movie.id);
+      let offers = [];
+      let watchUrl = null;
+      let available = false;
+      if (wantsStreaming) {
+        try {
+          const watch = await tmdb('/movie/' + movie.id + '/watch/providers');
+          const us = watch.results?.US || {};
+          for (const type of ['flatrate','free','ads','rent','buy']) for (const provider of us[type] || []) {
+            if ((!streamingTypes.length || streamingTypes.includes(type)) && (!p.providers.length || p.providers.includes(provider.provider_id))) offers.push({...provider,type});
+          }
+          available = offers.length > 0 || (!streamingTypes.length && !p.providers.length);
+          if (available) watchUrl = us.link || null;
+        } catch (_) { incomplete = true; }
+      }
+      if (!inTheaters && !available) return null;
+      return {...movie, providers:offers, watch_url:watchUrl, in_theaters:inTheaters,
+        reason:score > 2 ? 'Related to movies you selected or liked.' : 'Matches your selected preferences.'};
+    }));
+    out.push(...batch.filter(Boolean).slice(0, 3 - out.length));
+  }
+  const warnings = [];
+  if (theaterUnavailable) warnings.push('Theater listings could not be checked. Try again shortly.');
+  if (incomplete) warnings.push('Some streaming availability could not be checked. Try again shortly.');
+  if (out.length < 3) warnings.push('Fewer than three matches were found. Try selecting more options or relaxing the genre.');
+  return {results:out, warning:warnings.join(' ') || null};
 }
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');const p=u.pathname;
  if(req.method==='GET'&&p==='/api/config')return send(res,200,{tmdbConfigured:!!(TMDB_API_KEY||TMDB_READ_TOKEN),supabaseUrl:SUPABASE_URL,supabaseAnonKey:SUPABASE_ANON_KEY,authConfigured:!!(SUPABASE_URL&&SUPABASE_ANON_KEY)});
@@ -66,7 +153,7 @@ const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'htt
  if(p.startsWith('/api/'))return send(res,404,{error:'Not found.'});
  if(req.method!=='GET')return send(res,405,{error:'Method not allowed.'});
  const file=p==='/'?'index.html':p.slice(1);const full=path.resolve(publicDir,file);if(!full.startsWith(publicDir+path.sep))return send(res,403,{error:'Forbidden.'});
- const ext=path.extname(full);const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.png':'image/png'}[ext]||'application/octet-stream';
+ const ext=path.extname(full);const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'}[ext]||'application/octet-stream';
  fs.readFile(full,(err,bytes)=>{if(err)return send(res,404,{error:'Not found.'});res.writeHead(200,{'Content-Type':mime,'X-Content-Type-Options':'nosniff'});res.end(bytes)});
  }catch(err){console.error(err.message);send(res,err.status||500,{error:err.status?err.message:'Unexpected server error.'})}});
 if(require.main===module)server.listen(Number(process.env.PORT)||3000,()=>console.log('Listening on http://localhost:'+(process.env.PORT||3000)));
