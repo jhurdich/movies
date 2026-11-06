@@ -12,6 +12,7 @@ const publicDir = path.join(__dirname, 'public');
 const send = (res, status, value) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(value)); };
 const fail = (message,status) => Object.assign(new Error(message),{status});
 const ids = (a) => [...new Set((Array.isArray(a)?a:[]).map(x=>Number(typeof x==='object'?x.id:x)).filter(x=>Number.isSafeInteger(x)&&x>0))].slice(0,100);
+const movies = a => (Array.isArray(a)?a:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
 const cleanGenres = a => {const result=ids(a);if(Array.isArray(a)&&a.includes('coming-of-age'))result.push('coming-of-age');return result};
 async function tmdb(endpoint, params={}) {
  if(!TMDB_API_KEY&&!TMDB_READ_TOKEN) throw Object.assign(new Error('Movie data is not configured. Set a TMDB credential on the server.'),{status:503});
@@ -23,10 +24,10 @@ async function tmdb(endpoint, params={}) {
 }
 function sanitizedProfile(value) {
  const v=value&&typeof value==='object'?value:{};
- const watched=(Array.isArray(v.watched)?v.watched:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
+ const watched=movies(v.watched),saved=movies(v.saved);
  const ratings={};for(const [k,n] of Object.entries(v.ratings||{}).slice(0,1000)) if(/^\d{1,10}$/.test(k)&&(n===1||n===-1)) ratings[k]=n;
  const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x));
- return {watched,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
+ return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
 }
 async function profileRequest(req,method,profile) {
  if(!SUPABASE_URL||!SUPABASE_ANON_KEY) throw Object.assign(new Error('Account storage is not configured.'),{status:503});
@@ -41,7 +42,7 @@ async function profileRequest(req,method,profile) {
  const r=await fetch(url,opts);if(!r.ok)throw Object.assign(new Error('Could not save or load your profile. Check database setup.'),{status:502});
  const rows=await r.json();return rows.length ? sanitizedProfile(rows[0]?.profile) : null;
 }
-async function body(req){let data='';for await(const chunk of req){data+=chunk;if(data.length>100000)throw Object.assign(new Error('Request too large.'),{status:413});}try{return JSON.parse(data||'{}')}catch{throw Object.assign(new Error('Invalid JSON.'),{status:400})}}
+async function body(req){let data='';for await(const chunk of req){data+=chunk;if(data.length>500000)throw Object.assign(new Error('Request too large.'),{status:413});}try{return JSON.parse(data||'{}')}catch{throw Object.assign(new Error('Invalid JSON.'),{status:400})}}
 async function recommend(value) {
   const p = sanitizedProfile(value);
   const watched = ids(p.watched);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 
-function createHarness({failSave=false}={}) {
+function createHarness({failSave=false,remoteProfile=null}={}) {
   const elements=new Map(), storage=new Map(), calls=[];
   const element=()=>({
     value:'',textContent:'',hidden:false,disabled:false,dataset:{},style:{},
@@ -18,10 +18,10 @@ function createHarness({failSave=false}={}) {
   }};
   const context={document,localStorage,window:{},location:{origin:'https://example.test'},URL,
     setTimeout(){return 1},clearTimeout(){},
-    async fetch(_path,options){calls.push({type:'save',profile:JSON.parse(options.body).profile,authorization:options.headers.Authorization});return {ok:!failSave,json:async()=>failSave?{error:'offline'}:{profile:{}}}}
+    async fetch(_path,options){if(options.method!=='PUT')return {ok:true,json:async()=>({profile:remoteProfile})};calls.push({type:'save',profile:JSON.parse(options.body).profile,authorization:options.headers.Authorization});return {ok:!failSave,json:async()=>failSave?{error:'offline'}:{profile:{}}}}
   };
   const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/\ninit\(\);\s*$/,'');
-  runInNewContext(source+`\nthis.driver={start:(client)=>{supabaseClient=client;session={access_token:'test.token',user:{id:'user-1'}}},setMovie:()=>{profile.watched=[{id:42,title:'Saved movie',genre_ids:[18]}];profile.ratings={42:1};persist()},signOut:()=>signOutAccount(),login:()=>login('google')};`,context);
+  runInNewContext(source+`\nthis.driver={start:(client)=>{supabaseClient=client;session={access_token:'test.token',user:{id:'user-1'}};loadedAccountId='user-1'},setMovie:()=>{profile.watched=[{id:42,title:'Saved movie',genre_ids:[18]}];profile.ratings={42:1};persist()},setGuest:(owner='')=>{session=null;loadedAccountId=null;profileOwner=owner;profile=blank();profile.saved=[{id:7,title:'Browser movie'}];persist()},loadAccount:async()=>{session={access_token:'test.token',user:{id:'user-1'}};await updateAccount()},snapshot:()=>JSON.stringify(profile),signOut:()=>signOutAccount(),login:()=>login('google')};`,context);
   context.driver.start(client);
   return {driver:context.driver,calls,elements,storage};
 }
@@ -48,4 +48,22 @@ test('failed profile saving keeps the local movie and does not falsely complete 
   assert.deepEqual(calls.map(call=>call.type),['save']);
   assert.equal(JSON.parse(storage.get('nextthree.profile.v1')).watched[0].title,'Saved movie');
   assert.match(elements.get('configWarning').textContent,/Could not finish signing out/);
+});
+
+test('movies saved as a guest merge into an existing account without duplicates',async()=>{
+  const remoteProfile={watched:[],saved:[{id:8,title:'Account movie'}],ratings:{}};
+  const {driver,calls}=createHarness({remoteProfile});driver.setGuest();await driver.loadAccount();
+  const profile=JSON.parse(driver.snapshot());
+  assert.deepEqual(profile.saved.map(movie=>movie.id),[8,7]);
+  await driver.signOut();
+  assert.deepEqual(calls[0].profile.saved.map(movie=>movie.id),[8,7]);
+  const duplicate=createHarness({remoteProfile:{watched:[],saved:[{id:7,title:'Browser movie'}],ratings:{}}});
+  duplicate.driver.setGuest();await duplicate.driver.loadAccount();
+  assert.deepEqual(JSON.parse(duplicate.driver.snapshot()).saved.map(movie=>movie.id),[7]);
+});
+
+test('a different account does not inherit the prior account’s cached watchlist',async()=>{
+  const {driver}=createHarness({remoteProfile:{watched:[],saved:[{id:8,title:'Account movie'}],ratings:{}}});
+  driver.setGuest('different-user');await driver.loadAccount();
+  assert.deepEqual(JSON.parse(driver.snapshot()).saved.map(movie=>movie.id),[8]);
 });

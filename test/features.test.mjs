@@ -237,6 +237,31 @@ test('account storage round-trips watched movies and liked, disliked, or cleared
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test('saved recommendations survive account storage and can be removed independently', async () => {
+  let stored;
+  globalThis.fetch=async (url,options={})=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'verified-user'});
+    if(options.method==='POST')stored=JSON.parse(options.body).profile;
+    return Response.json(stored?[{profile:stored}]:[]);
+  };
+  const env={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public'};
+  const save=async profile=>{
+    const res=await worker.fetch(new Request('https://local/api/profile',{method:'PUT',headers:{authorization:'Bearer test.token','content-type':'application/json'},body:JSON.stringify({profile})}),env);
+    assert.equal(res.status,200);return (await res.json()).profile;
+  };
+  try {
+    const watched={id:1,title:'Already watched',genre_ids:[18]};
+    const later={id:2,title:'Watch later',release_date:'2026-10-01',genre_ids:[35]};
+    let profile=await save({watched:[watched],saved:[later,{id:-1,title:'Invalid'}],ratings:{1:1}});
+    assert.deepEqual(profile.saved.map(movie=>movie.title),['Watch later']);
+    const res=await worker.fetch(new Request('https://local/api/profile',{headers:{authorization:'Bearer test.token'}}),env);
+    assert.equal((await res.json()).profile.saved[0].id,2);
+    profile=await save({...profile,saved:[]});
+    assert.deepEqual(profile.saved,[]);assert.equal(profile.watched[0].id,1);assert.equal(profile.ratings['1'],1);
+    assert.equal(sanitizedProfile({saved:[later]}).saved[0].title,'Watch later');
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test('disliked watched movies do not boost related movies or their genres', async () => {
   const paths=[];
   globalThis.fetch=async url=>{

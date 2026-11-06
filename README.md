@@ -30,4 +30,6 @@ Movie queries use the TMDB API at request time. Recommendation candidates are ra
 
 The Coming of age choice uses TMDB's matching keyword. The theater option uses TMDB's current U.S. theatrical release window; it does not assert that a film is playing near a particular ZIP. A Google search link lets visitors check local showtimes. ZIP codes are stored with the user's other preferences and are included in the Google query only when a visitor opens that link. The site's optional zoom setting is stored on the current device.
 
+Visitors can save individual recommendations or a complete set to a watchlist. The watchlist is stored in the browser and, when signed in, in the user's account profile. Guest-saved movies are merged into an existing account when the user signs in.
+
 A signed in user's profile is read and written with that user's Supabase access token. The backend verifies it through Supabase Auth and never accepts a user ID from the client. The schema's row level security policies restrict access to the token owner. Configure security, account deletion, privacy information, rate limiting, and abuse protection for your deployment before broad public use.
