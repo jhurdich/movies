@@ -33,7 +33,7 @@ function renderSaved(){
     const actions=el('div',undefined,'saved-actions'),id=Number(movie.id);
     if(Number.isSafeInteger(id)&&id>0){const link=el('a','Where to watch ↗');link.href='https://www.themoviedb.org/movie/'+id+'/watch?locale=US';link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Where to watch '+title);actions.append(link)}
     const remove=el('button','Remove','remove-saved');remove.type='button';remove.setAttribute('aria-label','Remove '+title+' from saved movies');
-    remove.onclick=()=>{profile.saved=profile.saved.filter(item=>Number(item.id)!==id);persist();renderSaved();renderCards();$('savedStatus').textContent=title+' removed from saved movies.'};
+    remove.onclick=()=>{profile.saved=profile.saved.filter(item=>Number(item.id)!==id);persist();renderSaved();renderCards();$('saveMessage').textContent='';$('savedStatus').textContent=title+' removed from saved movies.'};
     actions.append(remove);row.append(details,actions);box.append(row);
   }
 }
@@ -41,8 +41,8 @@ function toggleSaved(movie){
   const id=Number(movie.id),exists=profile.saved.some(item=>Number(item.id)===id);
   if(exists)profile.saved=profile.saved.filter(item=>Number(item.id)!==id);
   else if(profile.saved.length<500)profile.saved.push(movieRecord(movie));
-  else{$('savedStatus').textContent='Your saved list is full. Remove a movie to save another.';return}
-  persist();renderSaved();renderCards();$('savedStatus').textContent=(movie.title||'Movie')+(exists?' removed from saved movies.':' saved for later.');
+  else{$('saveMessage').textContent='Your saved list is full. Remove a movie to save another.';return}
+  persist();renderSaved();renderCards();$('savedStatus').textContent='';$('saveMessage').textContent=(movie.title||'Movie')+(exists?' removed from saved movies.':' saved for later.');
   [...$('cards').querySelectorAll('button[data-save-id]')].find(button=>button.dataset.saveId===String(id))?.focus({preventScroll:true});
 }
 function saveRecommendations(){
@@ -50,7 +50,7 @@ function saveRecommendations(){
   for(const movie of current){const id=Number(movie.id);if(!known.has(id)&&profile.saved.length<500){profile.saved.push(movieRecord(movie));known.add(id);added++}}
   if(added){persist();renderSaved();renderCards()}
   const remaining=current.some(movie=>!known.has(Number(movie.id)));
-  $('savedStatus').textContent=added?`Saved ${added} ${added===1?'movie':'movies'} for later.`+(remaining?' Your saved list is full. Remove a movie to save another.':''):(remaining?'Your saved list is full. Remove a movie to save another.':'These recommendations are already saved.');
+  $('savedStatus').textContent='';$('saveMessage').textContent=added?`Saved ${added} ${added===1?'movie':'movies'} for later.`+(remaining?' Your saved list is full. Remove a movie to save another.':''):(remaining?'Your saved list is full. Remove a movie to save another.':'These recommendations are already saved.');
 }
 function setRating(movie,rating,origin){
   const existing=profile.ratings[movie.id];
@@ -150,7 +150,7 @@ async function signOutAccount(){
     const {error}=await supabaseClient.auth.signOut({scope:'local'});if(error)throw error;
     session=null;saveQueue=Promise.resolve();saveVersion=0;savedVersion=0;profile=blank();profileOwner='';loadedAccountId=null;
     try{localStorage.removeItem(STORAGE);localStorage.removeItem(OWNER_STORAGE)}catch(_){}
-    current=[];renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';renderProviders();renderGenres();renderTypes();renderZip();
+    current=[];renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';$('saveMessage').textContent='';renderProviders();renderGenres();renderTypes();renderZip();
     $('recommendStatus').textContent='Add a movie or select In theaters to get started.';await updateAccount();
   }catch(e){$('configWarning').textContent='Could not finish signing out or saving your changes. Please try again. '+e.message;$('configWarning').hidden=false}
   finally{button.disabled=false}
