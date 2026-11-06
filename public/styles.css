@@ -50,3 +50,14 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 .viewing-types .type-grid label{display:inline-flex;align-items:center;gap:6px;line-height:1.4}
 @media(max-width:760px){.viewing-grid{grid-template-columns:1fr;gap:24px}}
 .zoom-large .viewing-grid{grid-template-columns:1fr;gap:24px}
+
+/* Saved-movie ratings can be changed or cleared in the watched list. */
+.movie-chips .chip{max-width:100%;flex-wrap:wrap;gap:6px;font-size:13px}
+.movie-chips .chip>span{overflow-wrap:anywhere}
+.chip-ratings{display:flex;align-items:center;gap:3px}
+.chip .chip-rating{display:grid;place-items:center;min-width:40px;min-height:40px;font-size:16px;line-height:1;padding:5px;border:1px solid transparent;border-radius:4px}
+.chip .chip-rating[aria-pressed=true]{background:#d6e9d2;border-color:#749473}
+.chip .remove-watched{display:grid;place-items:center;min-width:40px;min-height:40px;font-size:20px;padding:2px 3px}
+.chip button:focus-visible,.card-actions button:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
+.card .rating-hint{font-size:11px;font-weight:600;color:#4c6852;margin:12px 0 0}
+.rating-hint+.card-actions{margin-top:8px}

@@ -212,6 +212,52 @@ test('account storage preserves multiple genres, the theater option and five-dig
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('account storage round-trips watched movies and liked, disliked, or cleared ratings', async () => {
+  let savedProfile;
+  globalThis.fetch=async (url,options={})=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'verified-user'});
+    if(options.method==='POST')savedProfile=JSON.parse(options.body).profile;
+    return Response.json(savedProfile?[{profile:savedProfile}]:[]);
+  };
+  const env={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public'};
+  const save=async profile=>{
+    const res=await worker.fetch(new Request('https://local/api/profile',{method:'PUT',headers:{authorization:'Bearer test.token','content-type':'application/json'},body:JSON.stringify({profile})}),env);
+    assert.equal(res.status,200);return (await res.json()).profile;
+  };
+  try {
+    const movie={id:42,title:'A movie',release_date:'2026-01-01',genre_ids:[18]};
+    assert.deepEqual((await save({watched:[movie],ratings:{42:1}})).ratings,{42:1});
+    assert.deepEqual((await save({watched:[movie],ratings:{42:-1}})).ratings,{42:-1});
+    let profile=await save({watched:[movie],ratings:{}});
+    assert.equal(profile.watched[0].title,'A movie');assert.deepEqual(profile.ratings,{});
+    profile=await save({watched:[],ratings:{}});
+    assert.deepEqual(profile.watched,[]);assert.deepEqual(profile.ratings,{});
+    const loaded=await worker.fetch(new Request('https://local/api/profile',{headers:{authorization:'Bearer test.token'}}),env);
+    assert.deepEqual((await loaded.json()).profile.watched,[]);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test('disliked watched movies do not boost related movies or their genres', async () => {
+  const paths=[];
+  globalThis.fetch=async url=>{
+    const u=new URL(url);paths.push(u.pathname);
+    if(u.pathname.endsWith('/discover/movie'))return Response.json({results:[
+      {id:3,title:'Disliked genre',genre_ids:[27]}, {id:4,title:'Liked genre',genre_ids:[18]}
+    ]});
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[]});
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const res=await worker.fetch(request({watched:[{id:1,genre_ids:[18]},{id:2,genre_ids:[27]}],ratings:{1:1,2:-1},types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();
+    assert.equal(res.status,200);
+    assert.ok(paths.includes('/3/movie/1/recommendations'));
+    assert.ok(!paths.includes('/3/movie/2/recommendations'));
+    assert.deepEqual(data.results.map(movie=>movie.id),[4,3]);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test('page zoom changes, resets and remembers a supported level', () => {
   const script=readFileSync(new URL('../public/zoom.js',import.meta.url),'utf8');
   const values=new Map();

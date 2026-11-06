@@ -47,7 +47,7 @@ async function recommend(value) {
   const watched = ids(p.watched);
   const liked = Object.keys(p.ratings).filter(id => p.ratings[id] === 1).map(Number);
   const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number)]);
-  const seeds = [...new Set([...liked, ...watched])].slice(0, 8);
+  const seeds = [...new Set([...liked, ...watched.filter(id => p.ratings[id] !== -1)])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
   const wantsTheaters = p.types.includes('theater');
@@ -121,7 +121,7 @@ async function recommend(value) {
     add(movie, liked.includes(seeds[i]) ? 4 : 2, true);
   }
   const preferences = {};
-  for (const movie of p.watched) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
+  for (const movie of p.watched) if (p.ratings[movie.id] !== -1) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
   const candidates = [...map.values()]
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
     .sort((a,b) => b.score - a.score).slice(0,32);
