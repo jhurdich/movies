@@ -20,6 +20,16 @@ node --test test/worker.test.mjs
 
 Create a Supabase project. In its SQL editor, run `schema.sql` once to create a profile table protected by row level security. Configure the Google and Facebook providers in Supabase Auth, create the respective OAuth apps with those providers, and set the callback URLs shown by Supabase. Add your app URL and allowed redirects in Supabase Auth URL configuration. Configure `SUPABASE_URL` and `SUPABASE_ANON_KEY` in the app environment. These values identify the project and are public; never use the Supabase service role key in the browser or Worker. Test sign in, sign out, first time profile migration, and profile isolation using separate test accounts before going live. Without configuration the sign in controls cannot authenticate. Users can still use local preferences when the frontend supports them.
 
+### Facebook sign-in
+
+1. Create or select the app in [Meta for Developers](https://developers.facebook.com/) and configure Facebook Login. Enable the `public_profile` and `email` permissions.
+2. In Supabase, open **Authentication → Sign In / Providers → Facebook** and copy the callback URL. Add that exact URL to the Facebook Login **Valid OAuth Redirect URIs** in Meta. It has the form `https://<project-ref>.supabase.co/auth/v1/callback`.
+3. Add the Facebook app ID and app secret to the Supabase Facebook provider and enable it. Keep the app secret in Supabase only; never commit it or expose it to the browser.
+4. In Supabase **Authentication → URL Configuration**, add the movie app's production URL and any local development URLs to the allowed redirect URLs. The app sends users back to its root page after signing in.
+5. Test with a Facebook account permitted to use the Meta app. Complete any required Meta review and switch the Meta app to Live mode before offering sign-in to the public.
+
+The app checks Supabase's public Auth settings and enables the Facebook button only when the provider is enabled. If the check fails, the button stays disabled; reopening the sign-in dialog retries it. Sign-in uses Supabase's normal Facebook OAuth flow and the same account-profile storage as Google.
+
 ## Cloudflare Worker
 
 The Worker serves the `public/` directory and handles `/api/*` routes. Install or use `wrangler`, sign in to your own Cloudflare account, and review `wrangler.jsonc` before deploying. Set a secret with `npx wrangler secret put TMDB_READ_TOKEN`. Configure `SUPABASE_URL` and `SUPABASE_ANON_KEY` as environment variables if accounts are enabled, then run `npx wrangler deploy`. Configure the deployed URL in Supabase and the login provider dashboards. Deployment creates a publicly reachable service, so verify access, licensing, secrets, and billing before publishing. This project has not been deployed by its authors here.
