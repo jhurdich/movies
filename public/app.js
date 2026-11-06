@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const blank=()=>({watched:[],saved:[],genres:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
 let profile=blank(), providers=[], genres=[], current=[], config={}, supabaseClient=null, session=null, searchSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
-let profileOwner='',loadedAccountId=null;
+let profileOwner='',loadedAccountId=null,facebookCheckVersion=0;
 const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1';
 try { const saved=JSON.parse(localStorage.getItem(STORAGE)); if(saved) profile={...blank(),...saved}; profileOwner=localStorage.getItem(OWNER_STORAGE)||''; } catch (_) {}
 if(!Array.isArray(profile.saved))profile.saved=[];
@@ -131,8 +131,25 @@ function renderCards(){
   }
 }
 async function recommend(){if(!profile.watched.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched or select In theaters.';return}if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}$('recommend').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';current=[];renderCards();try{const {saved,...preferences}=profile;const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(preferences)});current=data.results||[];renderCards();$('recommendStatus').textContent=[current.length?`Found ${current.length} ${current.length===1?'movie':'movies'} for you.`:'No matches found. Try another genre or service.',data.warning||''].filter(Boolean).join(' ');location.hash='discover'}catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false}}
-function openDialog(){$('authDialog').showModal()}
-async function authInit(){if(!config.authConfigured||!window.supabase){$('authNote').textContent='Sign in is not configured yet. Your selections are saved in this browser.';$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}supabaseClient=window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey);const result=await supabaseClient.auth.getSession();session=result.data.session;await updateAccount();supabaseClient.auth.onAuthStateChange((_event,newSession)=>{session=newSession;setTimeout(()=>updateAccount(),0)})}
+function openDialog(){$('authDialog').showModal();if(supabaseClient)updateFacebookAvailability()}
+async function updateFacebookAvailability(){
+  const version=++facebookCheckVersion;
+  try{
+    const response=await fetch(new URL('/auth/v1/settings',config.supabaseUrl),{headers:{apikey:config.supabaseAnonKey},cache:'no-store'});
+    if(!response.ok)throw new Error('Unable to check sign-in providers.');
+    const settings=await response.json(),enabled=settings?.external?.facebook===true;
+    if(version!==facebookCheckVersion)return;
+    $('facebookLogin').disabled=!enabled;
+    $('facebookUnavailable').hidden=enabled;
+    $('facebookUnavailable').textContent=enabled?'':'Facebook sign-in is not available yet.';
+  }catch(_){
+    if(version!==facebookCheckVersion)return;
+    $('facebookLogin').disabled=true;
+    $('facebookUnavailable').hidden=false;
+    $('facebookUnavailable').textContent='Facebook sign-in is temporarily unavailable. Please try again later.';
+  }
+}
+async function authInit(){if(!config.authConfigured||!window.supabase){$('authNote').textContent='Sign in is not configured yet. Your selections are saved in this browser.';$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}supabaseClient=window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey);updateFacebookAvailability();const result=await supabaseClient.auth.getSession();session=result.data.session;await updateAccount();supabaseClient.auth.onAuthStateChange((_event,newSession)=>{session=newSession;setTimeout(()=>updateAccount(),0)})}
 async function updateAccount(){
   if(!session){loadedAccountId=null;$('accountButton').textContent='Sign in';renderSaved();return}
   const owner=session.user?.id,wasGuest=!profileOwner;$('accountButton').textContent='Sign out';
@@ -156,7 +173,16 @@ async function updateAccount(){
     loadedAccountId=owner;persist();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderTypes();renderZip();
   }catch(e){$('configWarning').textContent='Could not load your saved profile: '+e.message;$('configWarning').hidden=false}
 }
-async function login(provider){if(!supabaseClient)return;const options={redirectTo:location.origin+'/'};if(provider==='google')options.queryParams={prompt:'select_account'};const {error}=await supabaseClient.auth.signInWithOAuth({provider,options});if(error)$('authNote').textContent=error.message}
+async function login(provider){
+  if(!supabaseClient||(provider==='facebook'&&$('facebookLogin').disabled))return;
+  const options={redirectTo:location.origin+'/'};
+  if(provider==='google')options.queryParams={prompt:'select_account'};
+  $('authNote').textContent='';
+  try{
+    const {error}=await supabaseClient.auth.signInWithOAuth({provider,options});
+    if(error)throw error;
+  }catch(error){$('authNote').textContent='Could not sign in. '+(error?.message||'Please try again.')}
+}
 async function signOutAccount(){
   const button=$('accountButton');button.disabled=true;
   try{
