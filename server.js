@@ -54,66 +54,82 @@ async function recommend(value) {
   const streamingTypes = p.types.filter(type => type !== 'theater');
   const wantsStreaming = streamingTypes.length > 0 || !wantsTheaters;
   const base = {language:'en-US', include_adult:'false', region:'US', sort_by:'popularity.desc', page:1};
-  if (genres.length) base.with_genres = genres.join('|');
+  const branches = [];
+  if (genres.length) branches.push({kind:'genres', params:{with_genres:genres.join('|')}});
   if (comingOfAge) {
     const found = await tmdb('/search/keyword', {query:'coming of age'});
     const keyword = (found.results || []).find(item =>
       String(item.name || '').trim().toLowerCase() === 'coming of age' &&
       Number.isSafeInteger(item.id) && item.id > 0);
     if (!keyword) throw fail('The coming-of-age filter is temporarily unavailable.', 503);
-    base.with_keywords = keyword.id;
+    branches.push({kind:'theme', params:{with_keywords:keyword.id}});
   }
+  if (!branches.length) branches.push({kind:'all', params:{}});
+
   const streamParams = {...base, watch_region:'US'};
   if (p.providers.length) streamParams.with_watch_providers = p.providers.join('|');
   if (streamingTypes.length) streamParams.with_watch_monetization_types = streamingTypes.join('|');
-  const [stream, nowPlaying, ...related] = await Promise.all([
-    wantsStreaming ? tmdb('/discover/movie', streamParams) : Promise.resolve({results:[]}),
+  const [streams, nowPlaying, ...related] = await Promise.all([
+    wantsStreaming ? Promise.all(branches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
     wantsTheaters ? tmdb('/movie/now_playing', {language:'en-US', region:'US'}).catch(() => null) : Promise.resolve(null),
     ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page:1}).catch(() => ({results:[]})))
   ]);
+  const streamResults = streams.flatMap(result => result.results || []);
+  const verifiedThemeIds = new Set();
+  for (let i = 0; i < streams.length; i++) if (branches[i].kind === 'theme') {
+    for (const movie of streams[i].results || []) verifiedThemeIds.add(movie.id);
+  }
 
   let theaterResults = [];
   let theaterUnavailable = false;
+  let theaterBranchesSucceeded = 0;
   if (wantsTheaters) {
     const min = nowPlaying?.dates?.minimum;
     const max = nowPlaying?.dates?.maximum;
     if (/^\d{4}-\d{2}-\d{2}$/.test(min || '') && /^\d{4}-\d{2}-\d{2}$/.test(max || '')) {
-      try {
-        const current = await tmdb('/discover/movie', {...base, include_video:'false',
-          with_release_type:'2|3', 'release_date.gte':min, 'release_date.lte':max});
-        theaterResults = current.results || [];
-      } catch (_) { theaterUnavailable = true; }
+      const theaters = await Promise.allSettled(branches.map(branch => tmdb('/discover/movie', {
+        ...base, ...branch.params, include_video:'false', with_release_type:'2|3',
+        'release_date.gte':min, 'release_date.lte':max
+      })));
+      for (let i = 0; i < theaters.length; i++) {
+        if (theaters[i].status === 'rejected') { theaterUnavailable = true; continue; }
+        theaterBranchesSucceeded++;
+        const movies = theaters[i].value.results || [];
+        theaterResults.push(...movies);
+        if (branches[i].kind === 'theme') for (const movie of movies) verifiedThemeIds.add(movie.id);
+      }
     } else theaterUnavailable = true;
   }
-  if (theaterUnavailable && !wantsStreaming) throw fail('Theater listings are temporarily unavailable.', 503);
+  if (theaterUnavailable && !theaterBranchesSucceeded && !wantsStreaming) throw fail('Theater listings are temporarily unavailable.', 503);
 
   const theaterIds = new Set(theaterResults.map(movie => movie.id));
-  const verifiedThemeIds = new Set([...(stream.results || []), ...theaterResults].map(movie => movie.id));
+  const matchesGenres = movie => (!genres.length && !comingOfAge) ||
+    (genres.length > 0 && (movie.genre_ids || []).some(genre => genres.includes(genre))) ||
+    (comingOfAge && verifiedThemeIds.has(movie.id));
   const map = new Map();
-  function add(movie, score) {
-    if (!movie.id || excluded.has(movie.id) || movie.adult) return;
-    const current = map.get(movie.id) || {movie, score:0};
+  function add(movie, score, isRelated = false) {
+    if (!movie.id || excluded.has(movie.id) || movie.adult || !matchesGenres(movie)) return;
+    const current = map.get(movie.id) || {movie, score:0, related:false};
     current.score += score;
+    current.related ||= isRelated;
     map.set(movie.id, current);
   }
-  for (const movie of stream.results || []) add(movie, 1);
+  for (const movie of streamResults) add(movie, 1);
   for (const movie of theaterResults) add(movie, 1);
   for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
-    if (comingOfAge && !verifiedThemeIds.has(movie.id)) continue;
     if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
-    add(movie, liked.includes(seeds[i]) ? 4 : 2);
+    add(movie, liked.includes(seeds[i]) ? 4 : 2, true);
   }
   const preferences = {};
   for (const movie of p.watched) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
   const candidates = [...map.values()]
-    .filter(item => !genres.length || item.movie.genre_ids?.some(genre => genres.includes(genre)))
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
     .sort((a,b) => b.score - a.score).slice(0,32);
 
   const out = [];
   let incomplete = false;
-  for (let i = 0; i < candidates.length && out.length < 3; i += 8) {
-    const batch = await Promise.all(candidates.slice(i, i + 8).map(async ({movie, score}) => {
+  for (let i = 0; i < candidates.length && out.length < 10; i += 6) {
+    const batch = await Promise.all(candidates.slice(i, i + 6).map(async ({movie, related}) => {
       const inTheaters = wantsTheaters && theaterIds.has(movie.id);
       let offers = [];
       let watchUrl = null;
@@ -131,14 +147,14 @@ async function recommend(value) {
       }
       if (!inTheaters && !available) return null;
       return {...movie, providers:offers, watch_url:watchUrl, in_theaters:inTheaters,
-        reason:score > 2 ? 'Related to movies you selected or liked.' : 'Matches your selected preferences.'};
+        reason:related ? 'Related to movies you selected or liked.' : 'Matches your selected preferences.'};
     }));
-    out.push(...batch.filter(Boolean).slice(0, 3 - out.length));
+    out.push(...batch.filter(Boolean).slice(0, 10 - out.length));
   }
   const warnings = [];
-  if (theaterUnavailable) warnings.push('Theater listings could not be checked. Try again shortly.');
+  if (theaterUnavailable) warnings.push('Some theater listings could not be checked. Try again shortly.');
   if (incomplete) warnings.push('Some streaming availability could not be checked. Try again shortly.');
-  if (out.length < 3) warnings.push('Fewer than three matches were found. Try selecting more options or relaxing the genre.');
+  if (out.length < 10) warnings.push('Fewer than 10 matches were found. Try selecting more options or relaxing the genres.');
   return {results:out, warning:warnings.join(' ') || null};
 }
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');const p=u.pathname;

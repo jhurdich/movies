@@ -33,6 +33,98 @@ test('coming-of-age recommendations use the matching movie keyword', async () =>
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('multiple genres match any chosen genre', async () => {
+  const seen = [];
+  globalThis.fetch = async url => {
+    const u = new URL(url); seen.push(u);
+    if (u.pathname.endsWith('/discover/movie')) return Response.json({results:[
+      {id:2,title:'Drama',genre_ids:[18]}, {id:3,title:'Comedy',genre_ids:[35]}
+    ]});
+    if (u.pathname.endsWith('/recommendations')) return Response.json({results:[{id:99,title:'Unrelated',genre_ids:[27]}]});
+    if (u.pathname.endsWith('/watch/providers')) return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const res = await worker.fetch(request({watched:[{id:1}],genres:[18,35],types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data = await res.json();
+    assert.equal(res.status,200);
+    assert.deepEqual(new Set(data.results.map(movie=>movie.id)),new Set([2,3]));
+    const discover=seen.find(url=>url.pathname.endsWith('/discover/movie'));
+    assert.equal(discover.searchParams.get('with_genres'),'18|35');
+    assert.equal(discover.searchParams.has('with_keywords'),false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('coming of age and other genres combine across streaming and theaters', async () => {
+  const seen = [];
+  globalThis.fetch = async url => {
+    const u = new URL(url); seen.push(u);
+    if (u.pathname.endsWith('/search/keyword')) return Response.json({results:[{id:10683,name:'coming of age'}]});
+    if (u.pathname.endsWith('/movie/now_playing')) return Response.json({dates:{minimum:'2026-09-01',maximum:'2026-11-05'}});
+    if (u.pathname.endsWith('/discover/movie')) {
+      const theme=u.searchParams.has('with_keywords'), theater=u.searchParams.has('with_release_type');
+      return Response.json({results:[theater
+        ? (theme ? {id:4,title:'Theme in theaters',genre_ids:[27]} : {id:3,title:'Drama in theaters',genre_ids:[18]})
+        : (theme ? {id:2,title:'Theme streaming',genre_ids:[35]} : {id:1,title:'Drama streaming',genre_ids:[18]})]});
+    }
+    if (u.pathname.endsWith('/recommendations')) return Response.json({results:[{id:99,title:'Unrelated',genre_ids:[27]}]});
+    if (u.pathname.endsWith('/watch/providers')) return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const res=await worker.fetch(request({watched:[{id:500}],genres:[18,'coming-of-age'],types:['flatrate','theater']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();
+    assert.equal(res.status,200);
+    assert.deepEqual(new Set(data.results.map(movie=>movie.id)),new Set([1,2,3,4]));
+    assert.deepEqual(new Set(data.results.filter(movie=>movie.in_theaters).map(movie=>movie.id)),new Set([3,4]));
+    assert.ok(data.results.every(movie=>movie.reason==='Matches your selected preferences.'));
+    const discovers=seen.filter(url=>url.pathname.endsWith('/discover/movie'));
+    assert.equal(discovers.length,4);
+    assert.ok(discovers.every(url=>url.searchParams.has('with_genres') !== url.searchParams.has('with_keywords')));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('recommendations return at most ten distinct unwatched and unrated movies', async () => {
+  const movies=Array.from({length:15},(_,i)=>({id:i+1,title:'Movie '+(i+1),genre_ids:[18]}));
+  globalThis.fetch=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith('/discover/movie')) return Response.json({results:[...movies,movies[4]]});
+    if(u.pathname.endsWith('/recommendations')) return Response.json({results:movies});
+    if(u.pathname.endsWith('/watch/providers')) return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const res=await worker.fetch(request({watched:[{id:1}],ratings:{2:-1},genres:[18],types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json(), ids=data.results.map(movie=>movie.id);
+    assert.equal(res.status,200);
+    assert.equal(ids.length,10);
+    assert.equal(new Set(ids).size,10);
+    assert.ok(!ids.includes(1) && !ids.includes(2));
+    assert.equal(data.warning,null);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test('a broad search stays within the Worker request limit', async () => {
+  let requests=0;
+  const movies=Array.from({length:32},(_,i)=>({id:100+i,title:'Candidate',genre_ids:[18]}));
+  globalThis.fetch=async url=>{
+    requests++;
+    const u=new URL(url);
+    if(u.pathname.endsWith('/search/keyword')) return Response.json({results:[{id:10683,name:'coming of age'}]});
+    if(u.pathname.endsWith('/movie/now_playing')) return Response.json({dates:{minimum:'2026-09-01',maximum:'2026-11-05'}});
+    if(u.pathname.endsWith('/discover/movie')) return Response.json({results:u.searchParams.has('with_release_type')?[]:movies});
+    if(u.pathname.endsWith('/recommendations')) return Response.json({results:[]});
+    if(u.pathname.endsWith('/watch/providers')) return Response.json({results:{US:{}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const res=await worker.fetch(request({watched:Array.from({length:8},(_,i)=>({id:i+1})),genres:[18,'coming-of-age'],types:['flatrate','theater']}),{TMDB_API_KEY:'fake'});
+    assert.equal(res.status,200);
+    assert.equal((await res.json()).results.length,0);
+    assert.ok(requests<=50,`Made ${requests} external requests`);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test('theater-only results use current U.S. release dates and never send ZIP to the movie service', async () => {
   const seen = [];
   globalThis.fetch = async url => {
@@ -100,7 +192,7 @@ test('a missing coming-of-age keyword does not fall back to unrelated movies', a
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('account storage preserves the theme, theater option and five-digit ZIP', async () => {
+test('account storage preserves multiple genres, the theater option and five-digit ZIP', async () => {
   let saved;
   globalThis.fetch = async (url, options={}) => {
     if (String(url).endsWith('/auth/v1/user')) return Response.json({id:'verified-user'});
@@ -108,10 +200,11 @@ test('account storage preserves the theme, theater option and five-digit ZIP', a
     return Response.json([saved]);
   };
   try {
-    const res = await worker.fetch(new Request('https://local/api/profile',{method:'PUT',headers:{authorization:'Bearer test.token','content-type':'application/json'},body:JSON.stringify({profile:{genres:['coming-of-age'],types:['theater'],zipCode:'01234'}})}),{SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public'});
+    const res = await worker.fetch(new Request('https://local/api/profile',{method:'PUT',headers:{authorization:'Bearer test.token','content-type':'application/json'},body:JSON.stringify({profile:{genres:[18,35,'coming-of-age'],types:['theater'],zipCode:'01234'}})}),{SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public'});
     const data = await res.json();
     assert.equal(res.status,200);
-    assert.deepEqual(saved.profile.genres,['coming-of-age']);
+    assert.deepEqual(saved.profile.genres,[18,35,'coming-of-age']);
+    assert.deepEqual(data.profile.genres,[18,35,'coming-of-age']);
     assert.deepEqual(saved.profile.types,['theater']);
     assert.equal(saved.profile.zipCode,'01234');
     assert.equal(data.profile.zipCode,'01234');

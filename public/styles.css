@@ -33,3 +33,20 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 .brand-logo{max-width:100%}
 .zoom-large .foot{flex-direction:column}
 .zoom-large .brand-logo-footer{margin-left:0}
+
+/* Genre choices and a dedicated viewing-options section. */
+.genre-fieldset,.viewing-types{border:0;padding:0;margin:0;min-width:0}
+.genre-fieldset legend,.viewing-types legend{font-size:12px;font-weight:700;color:#242722}
+.genre-help{font-size:12px;line-height:1.5;color:#6f786e;margin:9px 0 14px}
+.genre-options{display:flex;flex-wrap:wrap;gap:9px}
+.genre-option{position:relative;display:inline-flex;align-items:center;gap:7px;padding:9px 11px;border:1px solid #dce2d8;border-radius:5px;background:#f8faf6;color:#3d5141;cursor:pointer}
+.genre-option:has(input:checked){background:#e3ecdf;border-color:#80a086;color:#284c36}
+.genre-option input,.type-grid input{accent-color:#477451;margin:0}
+.genre-option:has(input:focus-visible){outline:3px solid #c19852;outline-offset:2px}
+.viewing-panel{margin-top:18px}
+.viewing-panel .label-row{margin-top:0}
+.viewing-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+.viewing-types .type-grid{gap:13px 16px}
+.viewing-types .type-grid label{display:inline-flex;align-items:center;gap:6px;line-height:1.4}
+@media(max-width:760px){.viewing-grid{grid-template-columns:1fr;gap:24px}}
+.zoom-large .viewing-grid{grid-template-columns:1fr;gap:24px}
