@@ -124,3 +124,14 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 .zoom-large .recommend-bar{padding:18px}
 .zoom-large .recommend-popcorn{width:56px;height:56px;flex-basis:56px}
 @media(max-width:480px){.zoom-large .recommend-copy{align-items:flex-start;flex-direction:column;gap:8px}}
+
+/* Five-star ratings remain keyboard accessible and wrap at larger zoom levels. */
+.star-control{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;max-width:100%}
+.star-rating{display:flex;align-items:center;flex-wrap:wrap;max-width:100%}
+.chip .star-button,.card .star-button{display:grid;place-items:center;min-width:32px;min-height:40px;padding:0 2px;border:1px solid transparent;border-radius:5px;background:transparent;color:#65776a;font-size:24px;line-height:1}
+.chip .star-button.is-filled,.card .star-button.is-filled{color:#986411}
+.chip .star-button[aria-pressed=true],.card .star-button[aria-pressed=true]{background:#f9e9c3;border-color:#c39b55}
+.star-button:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
+.star-value{font-size:11px;line-height:1.35;color:#526656}
+.card .star-control{margin-top:5px}
+.card .card-actions{margin-top:8px}

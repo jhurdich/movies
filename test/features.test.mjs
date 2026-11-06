@@ -237,6 +237,27 @@ test('account storage round-trips watched movies and liked, disliked, or cleared
   } finally { globalThis.fetch=originalFetch; }
 });
 
+test('account storage preserves valid star ratings and earlier thumbs separately', async () => {
+  let stored;
+  globalThis.fetch=async (url,options={})=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'verified-user'});
+    if(options.method==='POST')stored=JSON.parse(options.body).profile;
+    return Response.json(stored?[{profile:stored}]:[]);
+  };
+  try {
+    const env={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public'};
+    const input={watched:[{id:1,title:'Seen'}],ratings:{1:1,2:-1},starRatings:{3:5,4:1,5:3,6:6,7:0,8:2.5,wrong:4}};
+    const res=await worker.fetch(new Request('https://local/api/profile',{method:'PUT',headers:{authorization:'Bearer test.token','content-type':'application/json'},body:JSON.stringify({profile:input})}),env);
+    const saved=(await res.json()).profile;
+    assert.equal(res.status,200);
+    assert.deepEqual(saved.ratings,{1:1,2:-1});
+    assert.deepEqual(saved.starRatings,{3:5,4:1,5:3});
+    assert.deepEqual(sanitizedProfile(input).starRatings,{3:5,4:1,5:3});
+    const read=await worker.fetch(new Request('https://local/api/profile',{headers:{authorization:'Bearer test.token'}}),env);
+    assert.deepEqual((await read.json()).profile.starRatings,{3:5,4:1,5:3});
+  } finally { globalThis.fetch=originalFetch; }
+});
+
 test('saved recommendations survive account storage and can be removed independently', async () => {
   let stored;
   globalThis.fetch=async (url,options={})=>{
@@ -280,6 +301,30 @@ test('disliked watched movies do not boost related movies or their genres', asyn
     assert.ok(paths.includes('/3/movie/1/recommendations'));
     assert.ok(!paths.includes('/3/movie/2/recommendations'));
     assert.deepEqual(data.results.map(movie=>movie.id),[4,3]);
+  } finally { globalThis.fetch=originalFetch; }
+});
+
+test('four- and five-star films guide recommendations while lower ratings do not', async () => {
+  const paths=[];
+  globalThis.fetch=async url=>{
+    const u=new URL(url);paths.push(u.pathname);
+    if(u.pathname.endsWith('/discover/movie'))return Response.json({results:[
+      {id:10,title:'Related to five',genre_ids:[18]}, {id:11,title:'Related to four',genre_ids:[28]}
+    ]});
+    if(u.pathname.endsWith('/movie/1/recommendations'))return Response.json({results:[{id:10,title:'Related to five',genre_ids:[18]}]});
+    if(u.pathname.endsWith('/movie/4/recommendations'))return Response.json({results:[{id:11,title:'Related to four',genre_ids:[28]}]});
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[]});
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try {
+    const watched=[{id:1,genre_ids:[18]},{id:2,genre_ids:[27]},{id:3,genre_ids:[35]},{id:4,genre_ids:[28]},{id:5,genre_ids:[80]},{id:6,genre_ids:[99]}];
+    const res=await worker.fetch(request({watched,starRatings:{1:5,2:1,3:3,4:4},ratings:{1:-1,2:1,5:-1,6:1},types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();
+    assert.equal(res.status,200);
+    for(const id of [1,4,6])assert.ok(paths.includes(`/3/movie/${id}/recommendations`));
+    for(const id of [2,3,5])assert.ok(!paths.includes(`/3/movie/${id}/recommendations`));
+    assert.deepEqual(data.results.map(movie=>movie.id),[10,11]);
   } finally { globalThis.fetch=originalFetch; }
 });
 

@@ -7,16 +7,22 @@ export default {
   const fail=(message,status)=>Object.assign(new Error(message),{status});
   const ids=a=>[...new Set((Array.isArray(a)?a:[]).map(x=>Number(typeof x==='object'?x.id:x)).filter(x=>Number.isSafeInteger(x)&&x>0))].slice(0,100);
   const movies=a=>(Array.isArray(a)?a:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
+  const cleanStars=a=>{const result={};for(const [id,n] of Object.entries(a&&typeof a==='object'?a:{}).slice(0,1000))if(/^\d{1,10}$/.test(id)&&Number.isInteger(n)&&n>=1&&n<=5)result[id]=n;return result};
   const cleanGenres=a=>{const result=ids(a);if(Array.isArray(a)&&a.includes('coming-of-age'))result.push('coming-of-age');return result};
-  const clean=v=>{v=v&&typeof v==='object'?v:{};let watched=movies(v.watched),saved=movies(v.saved);let ratings={};for(let [k,n] of Object.entries(v.ratings||{}).slice(0,1000))if(/^\d{1,10}$/.test(k)&&(n===1||n===-1))ratings[k]=n;return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:'',types:(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x))}};
+  const clean=v=>{v=v&&typeof v==='object'?v:{};let watched=movies(v.watched),saved=movies(v.saved);let ratings={};for(let [k,n] of Object.entries(v.ratings||{}).slice(0,1000))if(/^\d{1,10}$/.test(k)&&(n===1||n===-1))ratings[k]=n;return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:'',types:(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x))}};
   async function tmdb(path,params={}){if(!TMDB_API_KEY&&!TMDB_READ_TOKEN)throw fail('Movie data is not configured. Set a TMDB credential.',503);let u=new URL('https://api.themoviedb.org/3'+path);for(let [k,v] of Object.entries(params))if(v!==undefined&&v!=='')u.searchParams.set(k,String(v));if(TMDB_API_KEY)u.searchParams.set('api_key',TMDB_API_KEY);let r=await fetch(u,{headers:TMDB_READ_TOKEN?{Authorization:'Bearer '+TMDB_READ_TOKEN}:{},signal:AbortSignal.timeout(12000)});if(!r.ok)throw fail('Movie data is temporarily unavailable.',r.status===429?429:502);return r.json()}
   async function profile(method,value){if(!SUPABASE_URL||!SUPABASE_ANON_KEY)throw fail('Account storage is not configured.',503);let auth=request.headers.get('Authorization')||'';if(!/^Bearer [\w.-]+$/.test(auth))throw fail('Please sign in first.',401);let headers={apikey:SUPABASE_ANON_KEY,Authorization:auth};let me=await fetch(SUPABASE_URL+'/auth/v1/user',{headers});if(!me.ok)throw fail('Your session has expired. Please sign in again.',401);let user=await me.json();if(!user.id)throw fail('Invalid session.',401);let url=SUPABASE_URL+'/rest/v1/movie_profiles?user_id=eq.'+encodeURIComponent(user.id)+'&select=profile', opts={headers};if(method==='PUT'){url=SUPABASE_URL+'/rest/v1/movie_profiles?on_conflict=user_id';opts={method:'POST',headers:{...headers,'Content-Type':'application/json',Prefer:'resolution=merge-duplicates,return=representation'},body:JSON.stringify({user_id:user.id,profile:clean(value)})}}let r=await fetch(url,opts);if(!r.ok)throw fail('Could not save or load your profile. Check database setup.',502);let rows=await r.json();return rows.length?clean(rows[0]?.profile):null}
   async function recommend(value) {
   const p = clean(value);
   const watched = ids(p.watched);
-  const liked = Object.keys(p.ratings).filter(id => p.ratings[id] === 1).map(Number);
-  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number)]);
-  const seeds = [...new Set([...liked, ...watched.filter(id => p.ratings[id] !== -1)])].slice(0, 8);
+  const stars = p.starRatings;
+  const notPositive = id => stars[id] ? stars[id] <= 3 : p.ratings[id] === -1;
+  const liked = [...new Set([
+    ...Object.keys(stars).filter(id => stars[id] >= 4).sort((a,b) => stars[b] - stars[a]).map(Number),
+    ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === 1).map(Number)
+  ])];
+  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number)]);
+  const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
   const wantsTheaters = p.types.includes('theater');
@@ -87,10 +93,10 @@ export default {
   for (const movie of theaterResults) add(movie, 1);
   for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
     if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
-    add(movie, liked.includes(seeds[i]) ? 4 : 2, true);
+    add(movie, stars[seeds[i]] === 5 ? 5 : liked.includes(seeds[i]) ? 4 : 2, true);
   }
   const preferences = {};
-  for (const movie of p.watched) if (p.ratings[movie.id] !== -1) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
+  for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 1.25 : 1);
   const candidates = [...map.values()]
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
     .sort((a,b) => b.score - a.score).slice(0,32);

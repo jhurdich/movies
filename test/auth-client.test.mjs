@@ -21,7 +21,7 @@ function createHarness({failSave=false,remoteProfile=null}={}) {
     async fetch(_path,options){if(options.method!=='PUT')return {ok:true,json:async()=>({profile:remoteProfile})};calls.push({type:'save',profile:JSON.parse(options.body).profile,authorization:options.headers.Authorization});return {ok:!failSave,json:async()=>failSave?{error:'offline'}:{profile:{}}}}
   };
   const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/\ninit\(\);\s*$/,'');
-  runInNewContext(source+`\nthis.driver={start:(client)=>{supabaseClient=client;session={access_token:'test.token',user:{id:'user-1'}};loadedAccountId='user-1'},setMovie:()=>{profile.watched=[{id:42,title:'Saved movie',genre_ids:[18]}];profile.ratings={42:1};persist()},setGuest:(owner='')=>{session=null;loadedAccountId=null;profileOwner=owner;profile=blank();profile.saved=[{id:7,title:'Browser movie'}];persist()},loadAccount:async()=>{session={access_token:'test.token',user:{id:'user-1'}};await updateAccount()},snapshot:()=>JSON.stringify(profile),signOut:()=>signOutAccount(),login:()=>login('google')};`,context);
+  runInNewContext(source+`\nthis.driver={start:(client)=>{supabaseClient=client;session={access_token:'test.token',user:{id:'user-1'}};loadedAccountId='user-1'},setMovie:()=>{profile.watched=[{id:42,title:'Saved movie',genre_ids:[18]}];profile.ratings={42:1};persist()},setGuest:(owner='')=>{session=null;loadedAccountId=null;profileOwner=owner;profile=blank();profile.saved=[{id:7,title:'Browser movie'}];persist()},setGuestStar:()=>{session=null;loadedAccountId=null;profileOwner='';profile=blank();profile.ratings={7:-1};setStarRating({id:7,title:'Browser movie',genre_ids:[18]},4,'watched')},rateGuestStar:n=>setStarRating({id:7,title:'Browser movie',genre_ids:[18]},n,'watched'),loadAccount:async()=>{session={access_token:'test.token',user:{id:'user-1'}};await updateAccount()},snapshot:()=>JSON.stringify(profile),signOut:()=>signOutAccount(),login:()=>login('google')};`,context);
   context.driver.start(client);
   return {driver:context.driver,calls,elements,storage};
 }
@@ -66,4 +66,21 @@ test('a different account does not inherit the prior account’s cached watchlis
   const {driver}=createHarness({remoteProfile:{watched:[],saved:[{id:8,title:'Account movie'}],ratings:{}}});
   driver.setGuest('different-user');await driver.loadAccount();
   assert.deepEqual(JSON.parse(driver.snapshot()).saved.map(movie=>movie.id),[8]);
+});
+
+test('star ratings mark a film watched, replace its old thumb, and can be cleared',()=>{
+  const {driver}=createHarness();driver.setGuestStar();
+  let profile=JSON.parse(driver.snapshot());
+  assert.equal(profile.watched[0].id,7);assert.equal(profile.starRatings['7'],4);assert.equal(profile.ratings['7'],undefined);
+  driver.rateGuestStar(4);profile=JSON.parse(driver.snapshot());
+  assert.equal(profile.starRatings['7'],undefined);assert.equal(profile.watched[0].id,7);
+  driver.rateGuestStar(1);profile=JSON.parse(driver.snapshot());assert.equal(profile.starRatings['7'],1);
+});
+
+test('guest star ratings and watched movies merge into an existing account',async()=>{
+  const remoteProfile={watched:[{id:8,title:'Account movie'}],saved:[],ratings:{8:1},starRatings:{8:5}};
+  const {driver,calls}=createHarness({remoteProfile});driver.setGuestStar();await driver.loadAccount();
+  const profile=JSON.parse(driver.snapshot());
+  assert.deepEqual(profile.watched.map(movie=>movie.id),[8,7]);assert.deepEqual(profile.starRatings,{7:4,8:5});
+  await driver.signOut();assert.deepEqual(calls[0].profile.starRatings,{7:4,8:5});
 });

@@ -32,4 +32,6 @@ The Coming of age choice uses TMDB's matching keyword. The theater option uses T
 
 Visitors can save individual recommendations or a complete set to a watchlist. The watchlist is stored in the browser and, when signed in, in the user's account profile. Guest-saved movies are merged into an existing account when the user signs in.
 
+Movies can be rated from one to five stars. Four- and five-star movies help guide recommendations; one-, two-, and three-star ratings do not boost related titles. Previous thumbs-up and thumbs-down feedback remains available until replaced with stars.
+
 A signed in user's profile is read and written with that user's Supabase access token. The backend verifies it through Supabase Auth and never accepts a user ID from the client. The schema's row level security policies restrict access to the token owner. Configure security, account deletion, privacy information, rate limiting, and abuse protection for your deployment before broad public use.

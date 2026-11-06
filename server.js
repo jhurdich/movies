@@ -13,6 +13,7 @@ const send = (res, status, value) => { res.writeHead(status, {'Content-Type':'ap
 const fail = (message,status) => Object.assign(new Error(message),{status});
 const ids = (a) => [...new Set((Array.isArray(a)?a:[]).map(x=>Number(typeof x==='object'?x.id:x)).filter(x=>Number.isSafeInteger(x)&&x>0))].slice(0,100);
 const movies = a => (Array.isArray(a)?a:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
+const cleanStars = a => {const result={};for(const [id,n] of Object.entries(a&&typeof a==='object'?a:{}).slice(0,1000))if(/^\d{1,10}$/.test(id)&&Number.isInteger(n)&&n>=1&&n<=5)result[id]=n;return result};
 const cleanGenres = a => {const result=ids(a);if(Array.isArray(a)&&a.includes('coming-of-age'))result.push('coming-of-age');return result};
 async function tmdb(endpoint, params={}) {
  if(!TMDB_API_KEY&&!TMDB_READ_TOKEN) throw Object.assign(new Error('Movie data is not configured. Set a TMDB credential on the server.'),{status:503});
@@ -27,7 +28,7 @@ function sanitizedProfile(value) {
  const watched=movies(v.watched),saved=movies(v.saved);
  const ratings={};for(const [k,n] of Object.entries(v.ratings||{}).slice(0,1000)) if(/^\d{1,10}$/.test(k)&&(n===1||n===-1)) ratings[k]=n;
  const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x));
- return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
+ return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
 }
 async function profileRequest(req,method,profile) {
  if(!SUPABASE_URL||!SUPABASE_ANON_KEY) throw Object.assign(new Error('Account storage is not configured.'),{status:503});
@@ -46,9 +47,14 @@ async function body(req){let data='';for await(const chunk of req){data+=chunk;i
 async function recommend(value) {
   const p = sanitizedProfile(value);
   const watched = ids(p.watched);
-  const liked = Object.keys(p.ratings).filter(id => p.ratings[id] === 1).map(Number);
-  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number)]);
-  const seeds = [...new Set([...liked, ...watched.filter(id => p.ratings[id] !== -1)])].slice(0, 8);
+  const stars = p.starRatings;
+  const notPositive = id => stars[id] ? stars[id] <= 3 : p.ratings[id] === -1;
+  const liked = [...new Set([
+    ...Object.keys(stars).filter(id => stars[id] >= 4).sort((a,b) => stars[b] - stars[a]).map(Number),
+    ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === 1).map(Number)
+  ])];
+  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number)]);
+  const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
   const wantsTheaters = p.types.includes('theater');
@@ -119,10 +125,10 @@ async function recommend(value) {
   for (const movie of theaterResults) add(movie, 1);
   for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
     if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
-    add(movie, liked.includes(seeds[i]) ? 4 : 2, true);
+    add(movie, stars[seeds[i]] === 5 ? 5 : liked.includes(seeds[i]) ? 4 : 2, true);
   }
   const preferences = {};
-  for (const movie of p.watched) if (p.ratings[movie.id] !== -1) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + 1;
+  for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 1.25 : 1);
   const candidates = [...map.values()]
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
     .sort((a,b) => b.score - a.score).slice(0,32);

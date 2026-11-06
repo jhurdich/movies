@@ -1,12 +1,14 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const blank=()=>({watched:[],saved:[],genres:[],providers:[],ratings:{},types:['flatrate','free','ads'],zipCode:''});
+const blank=()=>({watched:[],saved:[],genres:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
 let profile=blank(), providers=[], genres=[], current=[], config={}, supabaseClient=null, session=null, searchSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
 let profileOwner='',loadedAccountId=null;
 const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1';
 try { const saved=JSON.parse(localStorage.getItem(STORAGE)); if(saved) profile={...blank(),...saved}; profileOwner=localStorage.getItem(OWNER_STORAGE)||''; } catch (_) {}
 if(!Array.isArray(profile.saved))profile.saved=[];
+if(!profile.ratings||typeof profile.ratings!=='object'||Array.isArray(profile.ratings))profile.ratings={};
+if(!profile.starRatings||typeof profile.starRatings!=='object'||Array.isArray(profile.starRatings))profile.starRatings={};
 const el=(tag,text,className)=>{const node=document.createElement(tag); if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
 async function request(path, options={}){const headers={...(options.body?{'Content-Type':'application/json'}:{}),...(session?.access_token?{Authorization:`Bearer ${session.access_token}`}:{})};const res=await fetch(path,{...options,headers:{...headers,...options.headers}});let data;try{data=await res.json()}catch(_){throw new Error('The server returned an unexpected response.')}if(!res.ok)throw new Error(data.error||data.message||`Request failed (${res.status}).`);return data}
 function syncProfile(){
@@ -52,17 +54,31 @@ function saveRecommendations(){
   const remaining=current.some(movie=>!known.has(Number(movie.id)));
   $('savedStatus').textContent='';$('saveMessage').textContent=added?`Saved ${added} ${added===1?'movie':'movies'} for later.`+(remaining?' Your saved list is full. Remove a movie to save another.':''):(remaining?'Your saved list is full. Remove a movie to save another.':'These recommendations are already saved.');
 }
-function setRating(movie,rating,origin){
-  const existing=profile.ratings[movie.id];
-  if(existing===rating)delete profile.ratings[movie.id];
+function setStarRating(movie,rating,origin){
+  if(profile.starRatings[movie.id]===rating)delete profile.starRatings[movie.id];
   else {
-    profile.ratings[movie.id]=rating;
+    profile.starRatings[movie.id]=rating;
     if(!profile.watched.some(item=>item.id===movie.id))profile.watched.push(movieRecord(movie));
   }
+  delete profile.ratings[movie.id];
   persist();renderWatched();renderCards();
   const area=origin==='watched'?$('watched'):$('cards');
-  const replacement=[...area.querySelectorAll('button[data-movie-id]')].find(button=>button.dataset.movieId===String(movie.id)&&button.dataset.rating===String(rating));
+  const replacement=[...area.querySelectorAll('button[data-movie-id]')].find(button=>button.dataset.movieId===String(movie.id)&&button.dataset.stars===String(rating));
   replacement?.focus({preventScroll:true});
+}
+function starControl(movie,origin){
+  const title=movie.title||movie.name||`Movie ${movie.id}`,value=profile.starRatings[movie.id]||0;
+  const wrap=el('div',undefined,'star-control'),group=el('div',undefined,'star-rating');
+  group.setAttribute('role','group');group.setAttribute('aria-label','Rate '+title+' from 1 to 5 stars');
+  for(let n=1;n<=5;n++){
+    const button=el('button',n<=value?'★':'☆','star-button'+(n<=value?' is-filled':''));button.type='button';
+    button.dataset.movieId=String(movie.id);button.dataset.stars=String(n);
+    button.setAttribute('aria-label','Rate '+title+' '+n+' '+(n===1?'star':'stars')+(origin==='watched'?' in watched movies':''));
+    button.setAttribute('aria-pressed',String(value===n));button.onclick=()=>setStarRating(movie,n,origin);group.append(button);
+  }
+  const legacy=profile.ratings[movie.id];
+  const status=value?`${value} out of 5 stars`:legacy===1?'Earlier rating: liked':legacy===-1?'Earlier rating: disliked':'Not rated yet';
+  wrap.append(group,el('span',status,'star-value'));return wrap;
 }
 function renderWatched(){
   const container=$('watched');container.replaceChildren();
@@ -70,17 +86,10 @@ function renderWatched(){
   for(const movie of profile.watched){
     const title=movie.title||movie.name||`Movie ${movie.id}`,chip=el('div',undefined,'chip');
     chip.append(el('span',title));
-    const ratings=el('div',undefined,'chip-ratings');ratings.setAttribute('role','group');ratings.setAttribute('aria-label','Rate '+title);
-    for(const [rating,label] of [[1,'👍'],[-1,'👎']]){
-      const button=el('button',label,'chip-rating');button.type='button';
-      button.dataset.movieId=String(movie.id);button.dataset.rating=String(rating);
-      button.setAttribute('aria-label',(rating===1?'Like ':'Dislike ')+title+' in watched movies');
-      button.setAttribute('aria-pressed',String(profile.ratings[movie.id]===rating));
-      button.onclick=()=>setRating(movie,rating,'watched');ratings.append(button);
-    }
+    const ratings=starControl(movie,'watched');
     const remove=el('button','×','remove-watched');remove.type='button';
     remove.setAttribute('aria-label','Remove '+title+' and its rating from watched movies');
-    remove.onclick=()=>{profile.watched=profile.watched.filter(item=>item.id!==movie.id);delete profile.ratings[movie.id];persist();renderWatched();renderCards()};
+    remove.onclick=()=>{profile.watched=profile.watched.filter(item=>item.id!==movie.id);delete profile.ratings[movie.id];delete profile.starRatings[movie.id];persist();renderWatched();renderCards()};
     chip.append(ratings,remove);container.append(chip);
   }
 }
@@ -113,9 +122,8 @@ function renderCards(){
       body.append(showtimes);
     }
     const alreadyWatched=profile.watched.some(item=>item.id===movie.id);
-    body.append(el('p',alreadyWatched?'Saved to your watched movies.':'Seen it? Rate it to save as watched.','rating-hint'));
+    body.append(el('p',alreadyWatched?'Saved to your watched movies.':'Seen it? Rate it to save as watched.','rating-hint'),starControl(movie,'cards'));
     const actions=el('div',undefined,'card-actions');
-    for(const [rating,label] of [[1,'👍'],[-1,'👎']]){const b=el('button',label);b.type='button';b.dataset.movieId=String(movie.id);b.dataset.rating=String(rating);b.setAttribute('aria-label',(rating===1?'Like ':'Dislike ')+movie.title);b.setAttribute('aria-pressed',String(profile.ratings[movie.id]===rating));b.onclick=()=>setRating(movie,rating,'cards');actions.append(b)}
     if(movie.watch_url){try{const url=new URL(movie.watch_url);if(url.protocol==='https:'){const a=el('a','Where to watch ↗');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';actions.append(a)}}catch(_){}}
     const isSaved=profile.saved.some(item=>Number(item.id)===Number(movie.id)),save=el('button',isSaved?'✓ Saved for later':'☆ Save for later','save-movie');
     save.type='button';save.dataset.saveId=String(movie.id);save.setAttribute('aria-label','Save '+movie.title+' for later');save.setAttribute('aria-pressed',String(isSaved));save.onclick=()=>toggleSaved(movie);
@@ -132,10 +140,17 @@ async function updateAccount(){
   try{
     const data=await request('/api/profile');if(!session||session.user?.id!==owner)return;
     if(data.profile){
-      const guestSaved=wasGuest?profile.saved:[],account={...blank(),...data.profile};
+      const guestSaved=wasGuest?profile.saved:[],guestWatched=wasGuest?profile.watched:[],guestRatings=wasGuest?profile.ratings:{},guestStars=wasGuest?profile.starRatings:{},account={...blank(),...data.profile};
       if(!Array.isArray(account.saved))account.saved=[];
+      if(!Array.isArray(account.watched))account.watched=[];
+      if(!account.ratings||typeof account.ratings!=='object'||Array.isArray(account.ratings))account.ratings={};
+      if(!account.starRatings||typeof account.starRatings!=='object'||Array.isArray(account.starRatings))account.starRatings={};
       const known=new Set(account.saved.map(movie=>Number(movie.id)));
       for(const movie of guestSaved)if(!known.has(Number(movie.id))&&account.saved.length<500){account.saved.push(movieRecord(movie));known.add(Number(movie.id))}
+      const watchedIds=new Set(account.watched.map(movie=>Number(movie.id)));
+      for(const movie of guestWatched)if(!watchedIds.has(Number(movie.id))&&account.watched.length<500){account.watched.push(movieRecord(movie));watchedIds.add(Number(movie.id))}
+      for(const [id,rating] of Object.entries(guestRatings))if(!account.starRatings[id]&&!account.ratings[id])account.ratings[id]=rating;
+      for(const [id,rating] of Object.entries(guestStars)){account.starRatings[id]=rating;delete account.ratings[id]}
       profile=account;
     }else if(profileOwner&&profileOwner!==owner)profile=blank();
     loadedAccountId=owner;persist();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderTypes();renderZip();
