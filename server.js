@@ -12,7 +12,7 @@ const publicDir = path.join(__dirname, 'public');
 const send = (res, status, value) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(value)); };
 const fail = (message,status) => Object.assign(new Error(message),{status});
 const ids = (a) => [...new Set((Array.isArray(a)?a:[]).map(x=>Number(typeof x==='object'?x.id:x)).filter(x=>Number.isSafeInteger(x)&&x>0))].slice(0,100);
-const movies = a => (Array.isArray(a)?a:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,genre_ids:ids(x.genre_ids)}));
+const movies = a => (Array.isArray(a)?a:[]).slice(0,500).filter(x=>x&&Number.isSafeInteger(Number(x.id))&&Number(x.id)>0).map(x=>({id:Number(x.id),title:String(x.title||'').slice(0,200),release_date:String(x.release_date||'').slice(0,20),poster_path:typeof x.poster_path==='string'?x.poster_path.slice(0,200):null,overview:typeof x.overview==='string'?x.overview.slice(0,3000):'',genre_ids:ids(x.genre_ids)}));
 const cleanStars = a => {const result={};for(const [id,n] of Object.entries(a&&typeof a==='object'?a:{}).slice(0,1000))if(/^\d{1,10}$/.test(id)&&Number.isInteger(n)&&n>=1&&n<=5)result[id]=n;return result};
 const cleanGenres = a => {const result=ids(a);if(Array.isArray(a)&&a.includes('coming-of-age'))result.push('coming-of-age');return result};
 async function tmdb(endpoint, params={}) {
@@ -28,7 +28,7 @@ function sanitizedProfile(value) {
  const watched=movies(v.watched),saved=movies(v.saved);
  const ratings={};for(const [k,n] of Object.entries(v.ratings||{}).slice(0,1000)) if(/^\d{1,10}$/.test(k)&&(n===1||n===-1)) ratings[k]=n;
  const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x));
- return {watched,saved,genres:cleanGenres(v.genres),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
+ return {watched,saved,genres:cleanGenres(v.genres),decades:ids(v.decades).filter(n=>n>=1950&&n<=2020&&n%10===0),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
 }
 async function profileRequest(req,method,profile) {
  if(!SUPABASE_URL||!SUPABASE_ANON_KEY) throw Object.assign(new Error('Account storage is not configured.'),{status:503});
@@ -57,6 +57,7 @@ async function recommend(value) {
   const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
+  const decades = p.decades;
   const wantsTheaters = p.types.includes('theater');
   const streamingTypes = p.types.filter(type => type !== 'theater');
   const wantsStreaming = streamingTypes.length > 0 || !wantsTheaters;
@@ -73,17 +74,18 @@ async function recommend(value) {
   }
   if (!branches.length) branches.push({kind:'all', params:{}});
 
+  const streamBranches = decades.length ? branches.flatMap(branch => decades.map(decade => ({...branch, params:{...branch.params, 'primary_release_date.gte':`${decade}-01-01`, 'primary_release_date.lte':`${decade+9}-12-31`}}))) : branches;
   const streamParams = {...base, watch_region:'US'};
   if (p.providers.length) streamParams.with_watch_providers = p.providers.join('|');
   if (streamingTypes.length) streamParams.with_watch_monetization_types = streamingTypes.join('|');
   const [streams, nowPlaying, ...related] = await Promise.all([
-    wantsStreaming ? Promise.all(branches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
+    wantsStreaming ? Promise.all(streamBranches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
     wantsTheaters ? tmdb('/movie/now_playing', {language:'en-US', region:'US'}).catch(() => null) : Promise.resolve(null),
     ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page:1}).catch(() => ({results:[]})))
   ]);
   const streamResults = streams.flatMap(result => result.results || []);
   const verifiedThemeIds = new Set();
-  for (let i = 0; i < streams.length; i++) if (branches[i].kind === 'theme') {
+  for (let i = 0; i < streams.length; i++) if (streamBranches[i].kind === 'theme') {
     for (const movie of streams[i].results || []) verifiedThemeIds.add(movie.id);
   }
 
@@ -115,7 +117,8 @@ async function recommend(value) {
     (comingOfAge && verifiedThemeIds.has(movie.id));
   const map = new Map();
   function add(movie, score, isRelated = false) {
-    if (!movie.id || excluded.has(movie.id) || movie.adult || !matchesGenres(movie)) return;
+    const year = Number(String(movie.release_date || '').slice(0,4));
+    if (!movie.id || excluded.has(movie.id) || movie.adult || !matchesGenres(movie) || (decades.length && !decades.some(decade => year >= decade && year <= decade + 9))) return;
     const current = map.get(movie.id) || {movie, score:0, related:false};
     current.score += score;
     current.related ||= isRelated;
@@ -129,9 +132,11 @@ async function recommend(value) {
   }
   const preferences = {};
   for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 1.25 : 1);
+  // Keep discovery, seed, and availability calls below the Worker subrequest limit.
+  const candidateLimit = Math.min(32, Math.max(0, 48 - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? branches.length + 1 : 0) - seeds.length - (comingOfAge ? 1 : 0)));
   const candidates = [...map.values()]
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
-    .sort((a,b) => b.score - a.score).slice(0,32);
+    .sort((a,b) => b.score - a.score).slice(0,candidateLimit);
 
   const out = [];
   let incomplete = false;
@@ -161,7 +166,7 @@ async function recommend(value) {
   const warnings = [];
   if (theaterUnavailable) warnings.push('Some theater listings could not be checked. Try again shortly.');
   if (incomplete) warnings.push('Some streaming availability could not be checked. Try again shortly.');
-  if (out.length < 10) warnings.push('Fewer than 10 matches were found. Try selecting more options or relaxing the genres.');
+  if (out.length < 10) warnings.push('Fewer than 10 matches were found. Try selecting more options or relaxing the genres or decades.');
   return {results:out, warning:warnings.join(' ') || null};
 }
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');const p=u.pathname;
@@ -181,3 +186,4 @@ const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'htt
  }catch(err){console.error(err.message);send(res,err.status||500,{error:err.status?err.message:'Unexpected server error.'})}});
 if(require.main===module)server.listen(Number(process.env.PORT)||3000,()=>console.log('Listening on http://localhost:'+(process.env.PORT||3000)));
 module.exports={server,sanitizedProfile,recommend};
+

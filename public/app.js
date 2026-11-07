@@ -1,12 +1,13 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const blank=()=>({watched:[],saved:[],genres:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
+const blank=()=>({watched:[],saved:[],genres:[],decades:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
 let profile=blank(), providers=[], genres=[], current=[], config={}, supabaseClient=null, session=null, searchSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
 let profileOwner='',loadedAccountId=null;
 const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1';
 try { const saved=JSON.parse(localStorage.getItem(STORAGE)); if(saved) profile={...blank(),...saved}; profileOwner=localStorage.getItem(OWNER_STORAGE)||''; } catch (_) {}
 if(!Array.isArray(profile.saved))profile.saved=[];
+if(!Array.isArray(profile.decades))profile.decades=[];
 if(!profile.ratings||typeof profile.ratings!=='object'||Array.isArray(profile.ratings))profile.ratings={};
 if(!profile.starRatings||typeof profile.starRatings!=='object'||Array.isArray(profile.starRatings))profile.starRatings={};
 const el=(tag,text,className)=>{const node=document.createElement(tag); if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
@@ -23,7 +24,24 @@ function persist(){
   try{localStorage.setItem(STORAGE,JSON.stringify(profile));if(profileOwner)localStorage.setItem(OWNER_STORAGE,profileOwner);else localStorage.removeItem(OWNER_STORAGE)}catch(_){}
   if(session&&loadedAccountId===session.user?.id){saveVersion++;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveTimer=null;syncProfile().catch(e=>{$('configWarning').textContent='Could not save your profile to your account. Your changes remain in this browser. '+e.message;$('configWarning').hidden=false})},400)}
 }
-function movieRecord(movie){return {id:Number(movie.id),title:String(movie.title||movie.name||'').slice(0,200),release_date:String(movie.release_date||'').slice(0,20),poster_path:typeof movie.poster_path==='string'?movie.poster_path.slice(0,200):null,genre_ids:Array.isArray(movie.genre_ids)?movie.genre_ids:[]}}
+function movieRecord(movie){return {id:Number(movie.id),title:String(movie.title||movie.name||'').slice(0,200),release_date:String(movie.release_date||'').slice(0,20),poster_path:typeof movie.poster_path==='string'?movie.poster_path.slice(0,200):null,overview:typeof movie.overview==='string'?movie.overview.slice(0,3000):'',genre_ids:Array.isArray(movie.genre_ids)?movie.genre_ids:[]}}
+const hydrationAttempted=new WeakSet(), hydrationQueue=[];
+let hydrationActive=0;
+function hydrateSaved(movie){
+  if(hydrationAttempted.has(movie)||!Number.isSafeInteger(Number(movie.id))||Number(movie.id)<=0)return;
+  hydrationAttempted.add(movie);hydrationQueue.push(movie);drainHydration();
+}
+function drainHydration(){
+  while(hydrationActive<4&&hydrationQueue.length){
+    const movie=hydrationQueue.shift();if(!profile.saved.includes(movie))continue;
+    hydrationActive++;
+    request('/api/movies/'+Number(movie.id)).then(({movie:detail})=>{
+      if(!profile.saved.includes(movie)||!detail)return;
+      const updated=movieRecord({...movie,...detail,genre_ids:movie.genre_ids?.length?movie.genre_ids:(detail.genres||[]).map(g=>g.id)});
+      Object.assign(movie,updated);persist();renderSaved();
+    }).catch(()=>{}).finally(()=>{hydrationActive--;drainHydration()});
+  }
+}
 function renderSaved(){
   const box=$('savedMovies');box.replaceChildren();
   $('savedHelp').textContent=session?'Saved to your account for your next movie night.':'Saved in this browser. Sign in to keep your list across devices.';
@@ -31,12 +49,16 @@ function renderSaved(){
   if(!profile.saved.length){box.append(el('p','Movies you save will appear here.','saved-empty'));return}
   for(const movie of profile.saved){
     const title=movie.title||`Movie ${movie.id}`,row=el('div',undefined,'saved-row'),details=el('div',undefined,'saved-details');
-    details.append(el('strong',title));if(movie.release_date)details.append(el('span',movie.release_date.slice(0,4),'saved-year'));
+    const poster=movie.poster_path?document.createElement('img'):el('div','✦','saved-poster saved-poster-fallback');
+    if(movie.poster_path){poster.className='saved-poster';poster.alt=title+' poster';poster.loading='lazy';poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.onerror=()=>poster.replaceWith(el('div','✦','saved-poster saved-poster-fallback'))}
+    const heading=el('div',undefined,'saved-title');heading.append(el('strong',title));if(movie.release_date)heading.append(el('span',movie.release_date.slice(0,4),'saved-year'));
+    details.append(heading,el('p',movie.overview||'No synopsis available.','saved-overview'));
+    if(!movie.overview||!movie.poster_path)hydrateSaved(movie);
     const actions=el('div',undefined,'saved-actions'),id=Number(movie.id);
     if(Number.isSafeInteger(id)&&id>0){const link=el('a','Where to watch ↗');link.href='https://www.themoviedb.org/movie/'+id+'/watch?locale=US';link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Where to watch '+title);actions.append(link)}
     const remove=el('button','Remove','remove-saved');remove.type='button';remove.setAttribute('aria-label','Remove '+title+' from saved movies');
     remove.onclick=()=>{profile.saved=profile.saved.filter(item=>Number(item.id)!==id);persist();renderSaved();renderCards();$('saveMessage').textContent='';$('savedStatus').textContent=title+' removed from saved movies.'};
-    actions.append(remove);row.append(details,actions);box.append(row);
+    actions.append(remove);details.append(actions);row.append(poster,details);box.append(row);
   }
 }
 function toggleSaved(movie){
@@ -94,7 +116,19 @@ function renderWatched(){
   }
 }
 function renderProviders(){const box=$('providers');box.replaceChildren();const query=$('providerSearch').value.toLowerCase().trim();let list=providers.filter(p=>p.provider_name.toLowerCase().includes(query));if(!providers.length){box.append(el('p','Service choices appear when the movie catalog is connected.','hint'));return}if(!list.length){box.append(el('p','No services match your search.','hint'));return}for(const p of list){const b=el('button',p.provider_name,'provider');b.type='button';b.setAttribute('aria-pressed',profile.providers.includes(p.provider_id));b.onclick=()=>{profile.providers=profile.providers.includes(p.provider_id)?profile.providers.filter(i=>i!==p.provider_id):[...profile.providers,p.provider_id];persist();renderProviders()};box.append(b)}}
-function renderGenres(){const box=$('genreOptions');box.replaceChildren();for(const genre of [...genres,{id:'coming-of-age',name:'Coming of age'}].sort((a,b)=>a.name.localeCompare(b.name))){const label=el('label',undefined,'genre-option'),input=document.createElement('input'),text=el('span',genre.name);input.type='checkbox';input.value=String(genre.id);input.checked=profile.genres.some(value=>String(value)===String(genre.id));input.addEventListener('change',()=>{const choice=genre.id==='coming-of-age'?genre.id:Number(genre.id);profile.genres=profile.genres.filter(value=>String(value)!==String(choice));if(input.checked)profile.genres.push(choice);persist()});label.append(input,text);box.append(label)}}
+const genreArt={28:'💥',12:'🧭',16:'✏️',35:'🎭',80:'🔎',99:'🎥',18:'🎬',10751:'✨',14:'🐉',36:'🏛️',27:'🌙',10402:'🎵',9648:'🗝️',10749:'♥',878:'🪐',10770:'📺',53:'⚡',10752:'🎖️',37:'🤠','coming-of-age':'🌱'};
+function renderGenres(){
+  const box=$('genreOptions');box.replaceChildren();
+  for(const genre of [...genres,{id:'coming-of-age',name:'Coming of age'}].sort((a,b)=>a.name.localeCompare(b.name))){
+    const label=el('label',undefined,'genre-option'),input=document.createElement('input'),art=el('span',genreArt[genre.id]||'🎞️','genre-art'),text=el('span',genre.name,'genre-name');
+    art.setAttribute('aria-hidden','true');input.type='checkbox';input.value=String(genre.id);input.checked=profile.genres.some(value=>String(value)===String(genre.id));
+    input.addEventListener('change',()=>{const choice=genre.id==='coming-of-age'?genre.id:Number(genre.id);profile.genres=profile.genres.filter(value=>String(value)!==String(choice));if(input.checked)profile.genres.push(choice);persist()});label.append(input,art,text);box.append(label)
+  }
+}
+function renderDecades(){
+  const box=$('decadeOptions');box.replaceChildren();
+  for(let decade=1950;decade<=2020;decade+=10){const label=el('label',undefined,'decade-option'),input=document.createElement('input'),text=el('span',decade+'s');input.type='checkbox';input.checked=profile.decades.includes(decade);input.addEventListener('change',()=>{profile.decades=profile.decades.filter(value=>value!==decade);if(input.checked)profile.decades.push(decade);persist()});label.append(input,text);box.append(label)}
+}
 function renderZip(){const zip=$('zipCode');zip.value=/^\d{5}$/.test(profile.zipCode||'')?profile.zipCode:'';$('zipStatus').textContent=''}
 function renderTypes(){document.querySelectorAll('.type-grid input').forEach(input=>{input.checked=profile.types.includes(input.value)})}
 function debounce(fn,ms){let timer;return(...args)=>{clearTimeout(timer);timer=setTimeout(()=>fn(...args),ms)}}
@@ -130,7 +164,7 @@ function renderCards(){
     body.append(actions,save);card.append(body);box.append(card);
   }
 }
-async function recommend(){if(!profile.watched.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched or select In theaters.';return}if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}$('recommend').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';current=[];renderCards();try{const {saved,...preferences}=profile;const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(preferences)});current=data.results||[];renderCards();$('recommendStatus').textContent=[current.length?`Found ${current.length} ${current.length===1?'movie':'movies'} for you.`:'No matches found. Try another genre or service.',data.warning||''].filter(Boolean).join(' ');location.hash='discover'}catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false}}
+async function recommend(){if(!profile.watched.length&&!profile.decades.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched, choose a decade, or select In theaters.';return}if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}$('recommend').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';current=[];renderCards();try{const {saved,...preferences}=profile;const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(preferences)});current=data.results||[];renderCards();$('recommendStatus').textContent=[current.length?`Found ${current.length} ${current.length===1?'movie':'movies'} for you.`:'No matches found. Try another genre or service.',data.warning||''].filter(Boolean).join(' ');location.hash='discover'}catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false}}
 function openDialog(){$('authDialog').showModal()}
 async function authInit(){if(!config.authConfigured||!window.supabase){$('authNote').textContent='Sign in is not configured yet. Your selections are saved in this browser.';$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}supabaseClient=window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey);const result=await supabaseClient.auth.getSession();session=result.data.session;await updateAccount();supabaseClient.auth.onAuthStateChange((_event,newSession)=>{session=newSession;setTimeout(()=>updateAccount(),0)})}
 async function updateAccount(){
@@ -142,6 +176,7 @@ async function updateAccount(){
     if(data.profile){
       const guestSaved=wasGuest?profile.saved:[],guestWatched=wasGuest?profile.watched:[],guestRatings=wasGuest?profile.ratings:{},guestStars=wasGuest?profile.starRatings:{},account={...blank(),...data.profile};
       if(!Array.isArray(account.saved))account.saved=[];
+      if(!Array.isArray(account.decades))account.decades=[];
       if(!Array.isArray(account.watched))account.watched=[];
       if(!account.ratings||typeof account.ratings!=='object'||Array.isArray(account.ratings))account.ratings={};
       if(!account.starRatings||typeof account.starRatings!=='object'||Array.isArray(account.starRatings))account.starRatings={};
@@ -153,7 +188,7 @@ async function updateAccount(){
       for(const [id,rating] of Object.entries(guestStars)){account.starRatings[id]=rating;delete account.ratings[id]}
       profile=account;
     }else if(profileOwner&&profileOwner!==owner)profile=blank();
-    loadedAccountId=owner;persist();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderTypes();renderZip();
+    loadedAccountId=owner;persist();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
   }catch(e){$('configWarning').textContent='Could not load your saved profile: '+e.message;$('configWarning').hidden=false}
 }
 async function login(provider){if(!supabaseClient)return;const options={redirectTo:location.origin+'/'};if(provider==='google')options.queryParams={prompt:'select_account'};const {error}=await supabaseClient.auth.signInWithOAuth({provider,options});if(error)$('authNote').textContent=error.message}
@@ -165,12 +200,13 @@ async function signOutAccount(){
     const {error}=await supabaseClient.auth.signOut({scope:'local'});if(error)throw error;
     session=null;saveQueue=Promise.resolve();saveVersion=0;savedVersion=0;profile=blank();profileOwner='';loadedAccountId=null;
     try{localStorage.removeItem(STORAGE);localStorage.removeItem(OWNER_STORAGE)}catch(_){}
-    current=[];renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';$('saveMessage').textContent='';renderProviders();renderGenres();renderTypes();renderZip();
-    $('recommendStatus').textContent='Add a movie or select In theaters to get started.';await updateAccount();
+    current=[];renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';$('saveMessage').textContent='';renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
+    $('recommendStatus').textContent='Add a movie, choose a decade, or select In theaters to get started.';await updateAccount();
   }catch(e){$('configWarning').textContent='Could not finish signing out or saving your changes. Please try again. '+e.message;$('configWarning').hidden=false}
   finally{button.disabled=false}
 }
 $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g,'').slice(0,5);e.target.value=zip;$('zipStatus').textContent=zip&&zip.length<5?('Enter all 5 digits.'+(profile.zipCode?' Your saved ZIP is still in use.':'')):'';if(zip.length===5||zip.length===0){profile.zipCode=zip;persist();renderCards()}});
 $('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=recommend;$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
-async function init(){renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
+async function init(){renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
 init();
+
