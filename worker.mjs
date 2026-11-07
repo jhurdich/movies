@@ -42,19 +42,38 @@ export default {
   }
   if (!branches.length) branches.push({kind:'all', params:{}});
 
-  const streamBranches = decades.length ? branches.flatMap(branch => decades.map(decade => ({...branch, params:{...branch.params, 'primary_release_date.gte':`${decade}-01-01`, 'primary_release_date.lte':`${decade+9}-12-31`}}))) : branches;
+  const streamBranches = decades.length ? branches.flatMap(branch => decades.map(decade => ({...branch, params:{...branch.params, 'primary_release_date.gte':`${decade}-01-01`, 'primary_release_date.lte':`${decade+9}-12-31`}}))) : [...branches];
+  const theaterBranches = [...branches];
+  // Reserve requests for availability checks while adding targeted searches for underrepresented genres.
+  const discoveryBudget = Math.max(0, 48 - seeds.length - (comingOfAge ? 1 : 0) - (wantsTheaters ? 1 : 0) - (wantsStreaming ? 16 : 0));
+  let extraBudget = Math.max(0, discoveryBudget - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? theaterBranches.length : 0));
+  if (genres.length > 1) {
+    if (wantsStreaming) for (const decade of decades.length ? decades : [null]) for (const genre of genres) {
+      if (!extraBudget) break;
+      const params = {with_genres:String(genre)};
+      if (decade !== null) {params['primary_release_date.gte']=`${decade}-01-01`;params['primary_release_date.lte']=`${decade+9}-12-31`}
+      streamBranches.push({kind:'target',params});extraBudget--;
+    }
+    if (wantsTheaters) for (const genre of genres) {
+      if (!extraBudget) break;
+      theaterBranches.push({kind:'target',params:{with_genres:String(genre)}});extraBudget--;
+    }
+  }
   const streamParams = {...base, watch_region:'US'};
   if (p.providers.length) streamParams.with_watch_providers = p.providers.join('|');
   if (streamingTypes.length) streamParams.with_watch_monetization_types = streamingTypes.join('|');
   const [streams, nowPlaying, ...related] = await Promise.all([
-    wantsStreaming ? Promise.all(streamBranches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
+    wantsStreaming ? Promise.allSettled(streamBranches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
     wantsTheaters ? tmdb('/movie/now_playing', {language:'en-US', region:'US'}).catch(() => null) : Promise.resolve(null),
     ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page:1}).catch(() => ({results:[]})))
   ]);
-  const streamResults = streams.flatMap(result => result.results || []);
+  const discoveryIncomplete = streams.some(result => result.status === 'rejected');
+  if (wantsStreaming && streams.length && streams.every(result => result.status === 'rejected') && !wantsTheaters) throw fail('Movie searches are temporarily unavailable.',503);
+  const streamData = streams.map(result => result.status === 'fulfilled' ? result.value : {results:[]});
+  const streamResults = streamData.flatMap(result => result.results || []);
   const verifiedThemeIds = new Set();
   for (let i = 0; i < streams.length; i++) if (streamBranches[i].kind === 'theme') {
-    for (const movie of streams[i].results || []) verifiedThemeIds.add(movie.id);
+    for (const movie of streamData[i].results || []) verifiedThemeIds.add(movie.id);
   }
 
   let theaterResults = [];
@@ -64,7 +83,7 @@ export default {
     const min = nowPlaying?.dates?.minimum;
     const max = nowPlaying?.dates?.maximum;
     if (/^\d{4}-\d{2}-\d{2}$/.test(min || '') && /^\d{4}-\d{2}-\d{2}$/.test(max || '')) {
-      const theaters = await Promise.allSettled(branches.map(branch => tmdb('/discover/movie', {
+      const theaters = await Promise.allSettled(theaterBranches.map(branch => tmdb('/discover/movie', {
         ...base, ...branch.params, include_video:'false', with_release_type:'2|3',
         'release_date.gte':min, 'release_date.lte':max
       })));
@@ -73,7 +92,7 @@ export default {
         theaterBranchesSucceeded++;
         const movies = theaters[i].value.results || [];
         theaterResults.push(...movies);
-        if (branches[i].kind === 'theme') for (const movie of movies) verifiedThemeIds.add(movie.id);
+        if (theaterBranches[i].kind === 'theme') for (const movie of movies) verifiedThemeIds.add(movie.id);
       }
     } else theaterUnavailable = true;
   }
@@ -100,15 +119,25 @@ export default {
   }
   const preferences = {};
   for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 1.25 : 1);
-  // Keep discovery, seed, and availability calls below the Worker subrequest limit.
-  const candidateLimit = Math.min(32, Math.max(0, 48 - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? branches.length + 1 : 0) - seeds.length - (comingOfAge ? 1 : 0)));
-  const candidates = [...map.values()]
+  // Check a mix of genres before spending the remaining request budget on availability.
+  const candidateLimit = Math.min(32, Math.max(0, 48 - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? theaterBranches.length + 1 : 0) - seeds.length - (comingOfAge ? 1 : 0)));
+  const selectedGenres = [...genres.map(String), ...(comingOfAge ? ['coming-of-age'] : [])];
+  const covers = movie => [...(movie.genre_ids || []).filter(id => genres.includes(id)).map(String), ...(comingOfAge && verifiedThemeIds.has(movie.id) ? ['coming-of-age'] : [])];
+  const ranked = [...map.values()]
     .map(item => ({...item, score:item.score + (item.movie.genre_ids || []).reduce((sum, genre) => sum + (preferences[genre] || 0) * .15, 0) + Math.min(item.movie.vote_count || 0, 1000) / 10000}))
-    .sort((a,b) => b.score - a.score).slice(0,candidateLimit);
-
-  const out = [];
+    .sort((a,b) => b.score - a.score);
+  const ordered = [], seen = new Set();
+  if (selectedGenres.length > 1) {
+    const groups = selectedGenres.map(genre => ranked.filter(item => covers(item.movie).includes(genre)));
+    for (let index=0;index<ranked.length;index++) for (const group of groups) {
+      const item=group[index];if(item&&!seen.has(item.movie.id)){ordered.push(item);seen.add(item.movie.id)}
+    }
+  }
+  for (const item of ranked) if(!seen.has(item.movie.id)){ordered.push(item);seen.add(item.movie.id)}
+  const candidates=ordered.slice(0,candidateLimit), scores=new Map(ranked.map(item=>[item.movie.id,item.score]));
+  const available = [], availableGenres = new Set();
   let incomplete = false;
-  for (let i = 0; i < candidates.length && out.length < 10; i += 6) {
+  for (let i = 0; i < candidates.length && (available.length < 10 || selectedGenres.some(genre=>!availableGenres.has(genre))); i += 6) {
     const batch = await Promise.all(candidates.slice(i, i + 6).map(async ({movie, related}) => {
       const inTheaters = wantsTheaters && theaterIds.has(movie.id);
       let offers = [];
@@ -129,13 +158,25 @@ export default {
       return {...movie, providers:offers, watch_url:watchUrl, in_theaters:inTheaters,
         reason:related ? 'Related to movies you selected or liked.' : 'Matches your selected preferences.'};
     }));
-    out.push(...batch.filter(Boolean).slice(0, 10 - out.length));
+    for (const movie of batch.filter(Boolean)) {available.push(movie);for(const genre of covers(movie))availableGenres.add(genre)}
   }
+  available.sort((a,b)=>(scores.get(b.id)||0)-(scores.get(a.id)||0));
+  const out=[],remaining=[...available],uncovered=new Set(selectedGenres);
+  while(uncovered.size&&remaining.length&&out.length<10){
+    let best=-1,bestCount=0;
+    for(let i=0;i<remaining.length;i++){const count=covers(remaining[i]).filter(genre=>uncovered.has(genre)).length;if(count>bestCount){best=i;bestCount=count}}
+    if(best<0)break;
+    const [movie]=remaining.splice(best,1);out.push(movie);for(const genre of covers(movie))uncovered.delete(genre);
+  }
+  out.push(...remaining.slice(0,10-out.length));
+  const missingGenres=selectedGenres.filter(genre=>!out.some(movie=>covers(movie).includes(genre)));
   const warnings = [];
+  if (discoveryIncomplete) warnings.push('Some genre searches could not be checked. Try again shortly.');
+  if (missingGenres.length) warnings.push('Some selected genres could not be included. Try broadening your viewing options or selecting fewer genres.');
   if (theaterUnavailable) warnings.push('Some theater listings could not be checked. Try again shortly.');
   if (incomplete) warnings.push('Some streaming availability could not be checked. Try again shortly.');
   if (out.length < 10) warnings.push('Fewer than 10 matches were found. Try selecting more options or relaxing the genres or decades.');
-  return {results:out, warning:warnings.join(' ') || null};
+  return {results:out, warning:warnings.join(' ') || null, missing_genres:missingGenres};
 }
   try {let u=new URL(request.url),p=u.pathname,m=request.method;
    if(p==='/api/config'&&m==='GET')return reply(200,{tmdbConfigured:!!(TMDB_API_KEY||TMDB_READ_TOKEN),supabaseUrl:SUPABASE_URL,supabaseAnonKey:SUPABASE_ANON_KEY,authConfigured:!!(SUPABASE_URL&&SUPABASE_ANON_KEY)});
