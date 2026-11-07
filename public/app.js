@@ -140,7 +140,29 @@ async function loadFeatured(){
   }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='';updateCarouselControls()}
 }
 function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · use the arrows or scroll to explore':''}
-function updateCarouselControls(){const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth;$('postersPrevious').disabled=box.scrollLeft<=5;$('postersNext').disabled=max<=5||box.scrollLeft>=max-5}
+let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterHovered=false,posterTimer=null;
+function updateCarouselControls(){
+  const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth;
+  $('postersPrevious').disabled=box.scrollLeft<=5;$('postersNext').disabled=max<=5||box.scrollLeft>=max-5;
+  const toggle=$('postersToggle');toggle.disabled=max<=5;toggle.textContent=posterAutoPlaying?'Pause':'Play';toggle.setAttribute('aria-label',(posterAutoPlaying?'Pause':'Play')+' automatic poster scrolling');
+}
+function advancePosterCarousel(){
+  const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth,rect=box.getBoundingClientRect();
+  if(!posterAutoPlaying||posterHovered||document.hidden||max<=5||rect.bottom<=0||rect.top>=window.innerHeight)return;
+  if(box.scrollLeft>=max-5){box.scrollTo({left:0,behavior:'smooth'});return}
+  const first=box.querySelector('.featured-poster');
+  box.scrollBy({left:(first?.getBoundingClientRect().width||94)+10,behavior:'smooth'});
+}
+function startPosterAutoplay(){
+  if(posterTimer!==null)return;
+  const box=$('featuredPosters');
+  box.addEventListener('pointerenter',event=>{if(event.pointerType!=='touch')posterHovered=true});
+  box.addEventListener('pointerleave',()=>{posterHovered=false});
+  box.addEventListener('focusin',()=>{if(posterAutoPlaying){posterAutoPlaying=false;updateCarouselControls()}});
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change',event=>{if(event.matches){posterAutoPlaying=false;updateCarouselControls()}});
+  posterTimer=setInterval(advancePosterCarousel,3500);
+}
+
 function movePosters(direction){const box=$('featuredPosters');box.scrollBy({left:direction*Math.max(box.clientWidth*.8,100),behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}
 function movieListText(movies){return movies.map(movie=>{const year=/^\d{4}/.test(movie.release_date||'')?' ('+movie.release_date.slice(0,4)+')':'';return '• '+(movie.title||movie.name||'Movie')+year}).join('\n')}
 function composeShareMessage(watched,recommendations,includeWatched,includeRecommended,origin){
@@ -246,9 +268,9 @@ async function signOutAccount(){
   finally{button.disabled=false}
 }
 $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g,'').slice(0,5);e.target.value=zip;$('zipStatus').textContent=zip&&zip.length<5?('Enter all 5 digits.'+(profile.zipCode?' Your saved ZIP is still in use.':'')):'';if(zip.length===5||zip.length===0){profile.zipCode=zip;persist();renderCards()}});
-$('postersPrevious').onclick=()=>movePosters(-1);$('postersNext').onclick=()=>movePosters(1);$('featuredPosters').addEventListener('scroll',updateCarouselControls);window.addEventListener?.('resize',updateCarouselControls);
+$('postersToggle').onclick=()=>{posterAutoPlaying=!posterAutoPlaying;updateCarouselControls()};$('postersPrevious').onclick=()=>movePosters(-1);$('postersNext').onclick=()=>movePosters(1);$('featuredPosters').addEventListener('scroll',updateCarouselControls);window.addEventListener?.('resize',updateCarouselControls);
 $('shareMovies').onclick=()=>{updateShareMessage();$('shareDialog').showModal()};$('closeShare').onclick=()=>$('shareDialog').close();$('shareWatched').onchange=updateShareMessage;$('shareRecommended').onchange=updateShareMessage;$('shareText').addEventListener('input',updateShareButtons);$('nativeShare').onclick=shareMovies;$('copyShare').onclick=copyShareMessage;
 $('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=recommend;$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
-async function init(){renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{loadFeatured();const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
+async function init(){startPosterAutoplay();renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{loadFeatured();const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
 init();
 
