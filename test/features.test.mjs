@@ -411,3 +411,15 @@ test('featured carousel gathers distinct pages and tolerates one failed catalog 
     assert.equal(res.status,200);assert.equal(pages.length,4);assert.equal(new Set(pages).size,4);assert.equal(data.results.length,60);
   }finally{globalThis.fetch=originalFetch}
 });
+
+test('poster autoplay advances, wraps, and stays still when paused or offscreen',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const snippet=source.slice(source.indexOf('let posterAutoPlaying='),source.indexOf('function movePosters('));
+  const moves=[],box={scrollWidth:500,clientWidth:200,scrollLeft:0,getBoundingClientRect:()=>({top:10,bottom:200}),querySelector:()=>({getBoundingClientRect:()=>({width:80})}),scrollBy:value=>moves.push(['by',value.left]),scrollTo:value=>moves.push(['to',value.left])};
+  const context={window:{innerHeight:600,matchMedia:()=>({matches:false})},document:{hidden:false},$:()=>box};
+  runInNewContext(snippet+'\nthis.advance=advancePosterCarousel;this.pause=()=>{posterAutoPlaying=false};this.play=()=>{posterAutoPlaying=true};',context);
+  context.advance();assert.deepEqual(moves,[['by',90]]);
+  box.scrollLeft=300;context.advance();assert.deepEqual(moves[1],['to',0]);
+  context.pause();context.advance();assert.equal(moves.length,2);
+  context.play();context.document.hidden=true;context.advance();assert.equal(moves.length,2);
+});
