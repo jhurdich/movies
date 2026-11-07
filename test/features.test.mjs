@@ -382,7 +382,7 @@ test('featured posters only return films with artwork and omit adult titles',asy
     const res=await worker.fetch(new Request('https://local/api/featured'),{TMDB_API_KEY:'fake'});
     assert.deepEqual(await res.json(),{results:[{id:1,title:'Poster',poster_path:'/poster.jpg'}]});
     assert.equal(requested.pathname,'/3/movie/popular');
-    assert.ok(Number(requested.searchParams.get('page'))>=1&&Number(requested.searchParams.get('page'))<=5);
+    assert.ok(Number(requested.searchParams.get('page'))>=1&&Number(requested.searchParams.get('page'))<=10);
   }finally{globalThis.fetch=originalFetch}
 });
 
@@ -396,4 +396,18 @@ test('sharing composes only the selected movie lists and preserves titles and ye
   const onlyRecommendations=ctx.compose(watched,recommended,false,true,'https://example.test');
   assert.doesNotMatch(onlyRecommendations,/A watched film/);assert.match(onlyRecommendations,/A new pick/);
   assert.equal(ctx.compose([],[],true,true,'https://example.test'),'');
+});
+
+test('featured carousel gathers distinct pages and tolerates one failed catalog request',async()=>{
+  const pages=[];
+  globalThis.fetch=async url=>{
+    const page=Number(new URL(url).searchParams.get('page'));pages.push(page);
+    if(pages.length===1)return new Response(null,{status:502});
+    return Response.json({results:Array.from({length:20},(_,i)=>({id:page*100+i+1,title:'Film',poster_path:'/poster.jpg'}))});
+  };
+  try{
+    const res=await worker.fetch(new Request('https://local/api/featured'),{TMDB_API_KEY:'fake'});
+    const data=await res.json();
+    assert.equal(res.status,200);assert.equal(pages.length,4);assert.equal(new Set(pages).size,4);assert.equal(data.results.length,60);
+  }finally{globalThis.fetch=originalFetch}
 });
