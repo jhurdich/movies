@@ -392,7 +392,7 @@ test('sharing composes only the selected movie lists and preserves titles and ye
   const ctx={};runInNewContext(snippets+'\nthis.compose=composeShareMessage;',ctx);
   const watched=[{title:'A watched film',release_date:'1998-03-12'}],recommended=[{title:'A new pick',release_date:'2024-01-01'}];
   const both=ctx.compose(watched,recommended,true,true,'https://example.test');
-  assert.match(both,/A watched film \(1998\)/);assert.match(both,/A new pick \(2024\)/);assert.match(both,/https:\/\/example.test\//);
+  assert.match(both,/A watched film \(1998\)/);assert.match(both,/A new pick \(2024\)/);assert.ok(both.indexOf('A new pick')<both.indexOf('A watched film'));assert.match(both,/https:\/\/example.test\//);
   const onlyRecommendations=ctx.compose(watched,recommended,false,true,'https://example.test');
   assert.doesNotMatch(onlyRecommendations,/A watched film/);assert.match(onlyRecommendations,/A new pick/);
   assert.equal(ctx.compose([],[],true,true,'https://example.test'),'');
@@ -414,7 +414,7 @@ test('featured carousel gathers distinct pages and tolerates one failed catalog 
 
 test('poster autoplay advances, wraps, and stays still when paused or offscreen',()=>{
   const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  const snippet=source.slice(source.indexOf('let posterAutoPlaying='),source.indexOf('function movePosters('));
+  const snippet=source.slice(source.indexOf('let posterAutoPlaying='),source.indexOf('function movieListText('));
   const moves=[],box={scrollWidth:500,clientWidth:200,scrollLeft:0,getBoundingClientRect:()=>({top:10,bottom:200}),querySelector:()=>({getBoundingClientRect:()=>({width:80})}),scrollBy:value=>moves.push(['by',value.left]),scrollTo:value=>moves.push(['to',value.left])};
   const context={window:{innerHeight:600,matchMedia:()=>({matches:false})},document:{hidden:false},$:()=>box};
   runInNewContext(snippet+'\nthis.advance=advancePosterCarousel;this.pause=()=>{posterAutoPlaying=false};this.play=()=>{posterAutoPlaying=true};',context);
@@ -422,4 +422,24 @@ test('poster autoplay advances, wraps, and stays still when paused or offscreen'
   box.scrollLeft=300;context.advance();assert.deepEqual(moves[1],['to',0]);
   context.pause();context.advance();assert.equal(moves.length,2);
   context.play();context.document.hidden=true;context.advance();assert.equal(moves.length,2);
+});
+
+test('sharing passes the full edited message to the device share menu',async()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const code=source.slice(source.indexOf('async function shareMovies()'),source.indexOf('async function copyShareMessage()'));
+  const message='Movies recommended for me:\n• Pick One\n\nMovies I’ve watched:\n• Seen One';let shared;
+  const status={textContent:''},ctx={navigator:{share:async data=>{shared=data}},$:id=>id==='shareText'?{value:message}:status};
+  runInNewContext(code+'\nthis.send=shareMovies;',ctx);await ctx.send();
+  assert.equal(shared.text,message);assert.match(status.textContent,/messaging app/);
+});
+
+test('recommendations restore only for the same browser profile',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const code=source.slice(0,source.indexOf('if(!Array.isArray(profile.saved))'));
+  function load(owner,storedOwner){
+    const ctx={document:{getElementById:()=>({})},localStorage:{getItem:key=>key==='nextthree.profileOwner.v1'?owner:null},sessionStorage:{getItem:()=>JSON.stringify({owner:storedOwner,results:[{id:7,title:'A recommendation'}]})}};
+    runInNewContext(code+'\nthis.restored=current;',ctx);return ctx.restored;
+  }
+  assert.equal(load('account-1','account-1').length,1);
+  assert.equal(load('account-2','account-1').length,0);
 });
