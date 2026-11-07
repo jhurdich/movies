@@ -145,11 +145,11 @@ async function loadFeatured(){
     updatePosterStatus();
   }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='' }
 }
-function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · scroll or swipe to explore':''}
-let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterHovered=false,posterTimer=null;
+function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · moving automatically':''}
+let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterFocused=false,posterTimer=null;
 function advancePosterCarousel(){
   const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth,rect=box.getBoundingClientRect();
-  if(!posterAutoPlaying||posterHovered||document.hidden||max<=5||rect.bottom<=0||rect.top>=window.innerHeight)return;
+  if(!posterAutoPlaying||posterFocused||document.hidden||max<=5||rect.bottom<=0||rect.top>=window.innerHeight)return;
   if(box.scrollLeft>=max-5){box.scrollTo({left:0,behavior:'smooth'});return}
   const first=box.querySelector('.featured-poster');
   box.scrollBy({left:(first?.getBoundingClientRect().width||94)+10,behavior:'smooth'});
@@ -157,12 +157,9 @@ function advancePosterCarousel(){
 function startPosterAutoplay(){
   if(posterTimer!==null)return;
   const box=$('featuredPosters');
-  box.addEventListener('pointerenter',event=>{if(event.pointerType!=='touch')posterHovered=true});
-  box.addEventListener('pointerleave',()=>{posterHovered=false});
-  box.addEventListener('focusin',()=>{posterAutoPlaying=false});
-  box.addEventListener('pointerdown',event=>{if(event.pointerType==='touch')posterAutoPlaying=false});
-  box.addEventListener('keydown',event=>{if(event.target===box&&event.code==='Space'){event.preventDefault();posterAutoPlaying=!posterAutoPlaying}});
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change',event=>{if(event.matches)posterAutoPlaying=false});
+  box.addEventListener('focusin',event=>{if(event.target.matches(':focus-visible'))posterFocused=true});
+  box.addEventListener('focusout',event=>{if(!box.contains(event.relatedTarget))posterFocused=false});
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change',event=>{posterAutoPlaying=!event.matches});
   posterTimer=setInterval(advancePosterCarousel,1800);
 }
 
