@@ -371,3 +371,29 @@ test('account storage retains saved movie synopses and valid decades', () => {
   assert.equal(p.saved[0].overview,'A story worth watching.');
   assert.equal(p.saved[0].poster_path,'/poster.jpg');
 });
+
+test('featured posters only return films with artwork and omit adult titles',async()=>{
+  let requested;
+  globalThis.fetch=async url=>{
+    requested=new URL(url);
+    return Response.json({results:[{id:1,title:'Poster',poster_path:'/poster.jpg',adult:false},{id:2,title:'Missing',poster_path:null},{id:3,title:'Adult',poster_path:'/adult.jpg',adult:true}]});
+  };
+  try{
+    const res=await worker.fetch(new Request('https://local/api/featured'),{TMDB_API_KEY:'fake'});
+    assert.deepEqual(await res.json(),{results:[{id:1,title:'Poster',poster_path:'/poster.jpg'}]});
+    assert.equal(requested.pathname,'/3/movie/popular');
+    assert.ok(Number(requested.searchParams.get('page'))>=1&&Number(requested.searchParams.get('page'))<=5);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('sharing composes only the selected movie lists and preserves titles and years',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const snippets=source.slice(source.indexOf('function movieListText('),source.indexOf('function updateShareMessage('));
+  const ctx={};runInNewContext(snippets+'\nthis.compose=composeShareMessage;',ctx);
+  const watched=[{title:'A watched film',release_date:'1998-03-12'}],recommended=[{title:'A new pick',release_date:'2024-01-01'}];
+  const both=ctx.compose(watched,recommended,true,true,'https://example.test');
+  assert.match(both,/A watched film \(1998\)/);assert.match(both,/A new pick \(2024\)/);assert.match(both,/https:\/\/example.test\//);
+  const onlyRecommendations=ctx.compose(watched,recommended,false,true,'https://example.test');
+  assert.doesNotMatch(onlyRecommendations,/A watched film/);assert.match(onlyRecommendations,/A new pick/);
+  assert.equal(ctx.compose([],[],true,true,'https://example.test'),'');
+});

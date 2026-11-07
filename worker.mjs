@@ -140,6 +140,7 @@ export default {
   try {let u=new URL(request.url),p=u.pathname,m=request.method;
    if(p==='/api/config'&&m==='GET')return reply(200,{tmdbConfigured:!!(TMDB_API_KEY||TMDB_READ_TOKEN),supabaseUrl:SUPABASE_URL,supabaseAnonKey:SUPABASE_ANON_KEY,authConfigured:!!(SUPABASE_URL&&SUPABASE_ANON_KEY)});
    if(p==='/api/search'&&m==='GET'){let q=(u.searchParams.get('q')||'').trim();if(q.length<2)return reply(200,{results:[]});return reply(200,{results:(await tmdb('/search/movie',{query:q.slice(0,100),language:'en-US',include_adult:'false'})).results||[]})}
+   if(p==='/api/featured'&&m==='GET'){const page=1+Math.floor(Math.random()*5);const data=await tmdb('/movie/popular',{language:'en-US',region:'US',page});return reply(200,{results:(data.results||[]).filter(movie=>!movie.adult&&movie.poster_path).map(movie=>({id:movie.id,title:movie.title,poster_path:movie.poster_path}))})}
    if(p==='/api/genres'&&m==='GET')return reply(200,await tmdb('/genre/movie/list',{language:'en-US'}));
    if(p==='/api/providers'&&m==='GET')return reply(200,{results:(await tmdb('/watch/providers/movie',{language:'en-US',watch_region:'US'})).results||[]});
    if(/^\/api\/movies\/\d+$/.test(p)&&m==='GET')return reply(200,{movie:await tmdb('/movie/'+p.split('/').pop(),{language:'en-US'})});
