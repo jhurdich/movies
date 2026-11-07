@@ -443,3 +443,86 @@ test('recommendations restore only for the same browser profile',()=>{
   assert.equal(load('account-1','account-1').length,1);
   assert.equal(load('account-2','account-1').length,0);
 });
+
+test('recommendations include each selected genre even when one is less popular',async()=>{
+  const genreQueries=[];
+  globalThis.fetch=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith('/discover/movie')){
+      const genre=u.searchParams.get('with_genres');genreQueries.push(genre);
+      if(genre==='27')return Response.json({results:[{id:88,title:'Horror pick',genre_ids:[27],vote_count:1}]});
+      return Response.json({results:Array.from({length:20},(_,i)=>({id:i+10,title:'Drama',genre_ids:[18],vote_count:1000}))});
+    }
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Service'}]}}});
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[]});
+    throw new Error('Unexpected '+u.pathname);
+  };
+  try{
+    const res=await worker.fetch(request({watched:[{id:1}],genres:[18,27],types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();assert.equal(data.results.length,10);
+    assert.ok(data.results.some(movie=>movie.genre_ids.includes(18)));
+    assert.ok(data.results.some(movie=>movie.genre_ids.includes(27)));
+    assert.deepEqual(data.missing_genres,[]);assert.ok(genreQueries.includes('27'));
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('unavailable genres are reported without including unavailable movies',async()=>{
+  globalThis.fetch=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith('/discover/movie'))return Response.json({results:[{id:11,title:'Drama',genre_ids:[18]},{id:12,title:'Horror',genre_ids:[27]}]});
+    if(u.pathname.endsWith('/11/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Service'}]}}});
+    if(u.pathname.endsWith('/12/watch/providers'))return Response.json({results:{US:{}}});
+    throw new Error('Unexpected '+u.pathname);
+  };
+  try{
+    const res=await worker.fetch(request({genres:[18,27],providers:[9],types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();assert.deepEqual(data.results.map(movie=>movie.id),[11]);
+    assert.deepEqual(data.missing_genres,['27']);assert.match(data.warning,/Some selected genres could not be included/);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('many genres and decades remain within the Worker request budget',async()=>{
+  let calls=0;
+  globalThis.fetch=async url=>{
+    calls++;const u=new URL(url);
+    if(u.pathname.endsWith('/search/keyword'))return Response.json({results:[{id:10683,name:'coming of age'}]});
+    if(u.pathname.endsWith('/movie/now_playing'))return Response.json({dates:{minimum:'2026-01-01',maximum:'2026-12-31'}});
+    if(u.pathname.endsWith('/discover/movie'))return Response.json({results:Array.from({length:30},(_,i)=>({id:i+100,title:'Movie',release_date:'2020-01-01',genre_ids:[1+i%19]}))});
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[]});
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{}}});
+    throw new Error('Unexpected '+u.pathname);
+  };
+  try{
+    const res=await worker.fetch(request({watched:Array.from({length:8},(_,i)=>({id:i+1})),genres:[...Array.from({length:19},(_,i)=>i+1),'coming-of-age'],decades:[1950,1960,1970,1980,1990,2000,2010,2020],types:['flatrate','theater']}),{TMDB_API_KEY:'fake'});
+    assert.equal(res.status,200);assert.ok(calls<=50,`Made ${calls} calls`);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('a suggested movie can be added once with its poster and synopsis',async()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const movieRecordSource=source.slice(source.indexOf('function movieRecord('),source.indexOf('const hydrationAttempted'));
+  const searchSource=source.slice(source.indexOf('async function searchSuggestions('),source.indexOf('function renderCards('));
+  const elements=new Map(),makeElement=(tag,text='',className='')=>({tag,textContent:text,className,children:[],setAttribute(){},append(...children){this.children.push(...children)},replaceChildren(...children){this.children=children},focus(){},value:''});
+  const $=id=>{if(!elements.has(id))elements.set(id,makeElement('div'));return elements.get(id)};
+  const profile={saved:[]},movie={id:42,title:'Suggested movie',release_date:'1999-01-01',poster_path:'/poster.jpg',overview:'A story.',genre_ids:[18]};
+  const ctx={$,el:makeElement,profile,suggestedSeq:1,request:async()=>({results:[movie]}),persist(){},renderSaved(){},renderCards(){}};
+  runInNewContext(movieRecordSource+'\n'+searchSource+'\nthis.search=searchSuggestions;',ctx);await ctx.search('suggested',1);
+  const result=$('suggestedResults').children[0];assert.equal(result.disabled,false);result.onclick();result.onclick();
+  assert.equal(profile.saved.length,1);assert.equal(profile.saved[0].poster_path,'/poster.jpg');assert.equal(profile.saved[0].overview,'A story.');
+  assert.match($('savedStatus').textContent,/added to saved movies/);
+});
+
+test('coming-of-age is represented alongside selected genres when available',async()=>{
+  globalThis.fetch=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith('/search/keyword'))return Response.json({results:[{id:10683,name:'coming of age'}]});
+    if(u.pathname.endsWith('/discover/movie'))return Response.json({results:u.searchParams.has('with_keywords')?[{id:99,title:'Coming of age',genre_ids:[35]}]:Array.from({length:15},(_,i)=>({id:i+10,title:'Drama',genre_ids:[18]}))});
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Service'}]}}});
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[]});
+    throw new Error('Unexpected '+u.pathname);
+  };
+  try{
+    const res=await worker.fetch(request({genres:[18,'coming-of-age'],types:['flatrate']}),{TMDB_API_KEY:'fake'});const data=await res.json();
+    assert.equal(data.results.length,10);assert.ok(data.results.some(movie=>movie.id===99));assert.ok(data.results.some(movie=>movie.genre_ids.includes(18)));assert.deepEqual(data.missing_genres,[]);
+  }finally{globalThis.fetch=originalFetch}
+});
