@@ -342,3 +342,32 @@ test('page zoom changes, resets and remembers a supported level', () => {
   assert.equal(doc.body.style.zoom,'1');
   assert.equal(buttons.zoomReset.textContent,'100%');
 });
+
+
+test('selected decades search each era and exclude unrelated years from recommendations', async () => {
+  const discovers=[];
+  globalThis.fetch=async url=>{
+    const u=new URL(url);
+    if(u.pathname.endsWith('/discover/movie')){
+      discovers.push(u);
+      return Response.json({results:[{id:2,title:'Eighties',release_date:'1985-03-01',genre_ids:[18]},{id:3,title:'Nineties',release_date:'1997-02-01',genre_ids:[18]}]});
+    }
+    if(u.pathname.endsWith('/recommendations'))return Response.json({results:[{id:4,title:'Other era',release_date:'2010-01-01',genre_ids:[18]}]});
+    if(u.pathname.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Example'}]}}});
+    throw new Error('Unexpected request '+u.pathname);
+  };
+  try{
+    const res=await worker.fetch(request({watched:[{id:1}],genres:[18],decades:[1980,1990],types:['flatrate']}),{TMDB_API_KEY:'fake'});
+    const data=await res.json();
+    assert.deepEqual(new Set(data.results.map(movie=>movie.id)),new Set([2,3]));
+    assert.deepEqual(new Set(discovers.map(url=>url.searchParams.get('primary_release_date.gte'))),new Set(['1980-01-01','1990-01-01']));
+    assert.deepEqual(new Set(discovers.map(url=>url.searchParams.get('primary_release_date.lte'))),new Set(['1989-12-31','1999-12-31']));
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('account storage retains saved movie synopses and valid decades', () => {
+  const p=sanitizedProfile({decades:[1980,1990,1980,1985,3000],saved:[{id:10,title:'A film',poster_path:'/poster.jpg',overview:'A story worth watching.'}]});
+  assert.deepEqual(p.decades,[1980,1990]);
+  assert.equal(p.saved[0].overview,'A story worth watching.');
+  assert.equal(p.saved[0].poster_path,'/poster.jpg');
+});

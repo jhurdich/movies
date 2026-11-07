@@ -135,3 +135,17 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 .star-value{font-size:11px;line-height:1.35;color:#526656}
 .card .star-control{margin-top:5px}
 .card .card-actions{margin-top:8px}
+
+
+/* Genre artwork, decade choices, and saved movie details */
+.genre-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:9px}
+.genre-option{padding:0;display:flex;flex-direction:column;align-items:stretch;gap:0;overflow:hidden;text-align:center}
+.genre-option input{position:absolute;top:8px;right:8px;z-index:1;width:16px;height:16px}
+.genre-art{height:62px;display:grid;place-items:center;font-size:27px;background:linear-gradient(135deg,#3d5d50,#152c2b);color:#f3dfb5}
+.genre-option:nth-child(4n+2) .genre-art{background:linear-gradient(135deg,#8a5f4a,#4b3233)}
+.genre-option:nth-child(4n+3) .genre-art{background:linear-gradient(135deg,#657386,#293a50)}
+.genre-option:nth-child(4n) .genre-art{background:linear-gradient(135deg,#a18255,#554635)}
+.genre-name{padding:8px 4px;min-height:36px}
+.decade-panel{margin-top:18px}.decade-options{display:flex;flex-wrap:wrap;gap:9px}.decade-option{display:flex;gap:7px;align-items:center;padding:10px 14px;border:1px solid #dce2d8;border-radius:5px;background:#f8faf6;color:#3d5141;cursor:pointer}.decade-option input{margin:0;accent-color:#477451}.decade-option:has(input:checked){background:#e3ecdf;border-color:#80a086}.decade-option:has(input:focus-visible){outline:3px solid #c19852;outline-offset:2px}
+.saved-movies{max-height:none;overflow:visible}.saved-row{display:flex;align-items:flex-start;justify-content:flex-start;gap:16px;padding:16px 0}.saved-poster{width:78px;aspect-ratio:2/3;object-fit:cover;flex:0 0 78px;border-radius:3px;background:#30483e}.saved-poster-fallback{display:grid;place-items:center;color:#d9e2d4;font-size:24px}.saved-details{display:block;flex:1}.saved-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px}.saved-overview{font-size:12px;line-height:1.55;color:#667164;margin:8px 0 10px}.saved-actions{margin-top:8px}
+@media(max-width:760px){.saved-row{flex-direction:row}.saved-poster{width:65px;flex-basis:65px}}
