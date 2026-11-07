@@ -424,6 +424,22 @@ test('poster autoplay advances, wraps, and stays still when paused or offscreen'
   context.play();context.document.hidden=true;context.advance();assert.equal(moves.length,2);
 });
 
+test('carousel resumes after keyboard focus leaves and does not stop after touch',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const snippet=source.slice(source.indexOf('let posterAutoPlaying='),source.indexOf('function movieListText('));
+  const listeners={},moves=[],media={matches:false,addEventListener:(name,fn)=>{media.onChange=fn}};
+  const box={scrollWidth:500,clientWidth:200,scrollLeft:0,getBoundingClientRect:()=>({top:10,bottom:200}),querySelector:()=>({getBoundingClientRect:()=>({width:80})}),scrollBy:value=>moves.push(value.left),addEventListener:(name,fn)=>{listeners[name]=fn},contains:()=>false};
+  const context={window:{innerHeight:600,matchMedia:()=>media},document:{hidden:false},$:()=>box,setInterval:()=>1};
+  runInNewContext(snippet+'\nthis.start=startPosterAutoplay;this.advance=advancePosterCarousel;',context);
+  context.start();context.advance();assert.equal(moves.length,1);
+  listeners.focusin({target:{matches:()=>true}});context.advance();assert.equal(moves.length,1);
+  listeners.focusout({relatedTarget:null});context.advance();assert.equal(moves.length,2);
+  listeners.focusin({target:{matches:()=>false}});context.advance();assert.equal(moves.length,3);
+  assert.equal(listeners.pointerdown,undefined);
+  media.onChange({matches:true});context.advance();assert.equal(moves.length,3);
+  media.onChange({matches:false});context.advance();assert.equal(moves.length,4);
+});
+
 test('sharing passes the full edited message to the device share menu',async()=>{
   const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function shareMovies()'),source.indexOf('async function copyShareMessage()'));
