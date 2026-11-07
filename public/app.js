@@ -4,8 +4,9 @@ const blank=()=>({watched:[],saved:[],genres:[],decades:[],providers:[],ratings:
 let profile=blank(), providers=[], genres=[], current=[], config={}, supabaseClient=null, session=null, searchSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
 let profileOwner='',loadedAccountId=null;
-const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1';
+const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1', REC_STORAGE='nextthree.recommendations.v1';
 try { const saved=JSON.parse(localStorage.getItem(STORAGE)); if(saved) profile={...blank(),...saved}; profileOwner=localStorage.getItem(OWNER_STORAGE)||''; } catch (_) {}
+try{const stored=JSON.parse(sessionStorage.getItem(REC_STORAGE)||'null');if(stored&&stored.owner===profileOwner&&Array.isArray(stored.results))current=stored.results.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10)}catch(_){}
 if(!Array.isArray(profile.saved))profile.saved=[];
 if(!Array.isArray(profile.decades))profile.decades=[];
 if(!profile.ratings||typeof profile.ratings!=='object'||Array.isArray(profile.ratings))profile.ratings={};
@@ -24,6 +25,7 @@ function persist(){
   try{localStorage.setItem(STORAGE,JSON.stringify(profile));if(profileOwner)localStorage.setItem(OWNER_STORAGE,profileOwner);else localStorage.removeItem(OWNER_STORAGE)}catch(_){}
   if(session&&loadedAccountId===session.user?.id){saveVersion++;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveTimer=null;syncProfile().catch(e=>{$('configWarning').textContent='Could not save your profile to your account. Your changes remain in this browser. '+e.message;$('configWarning').hidden=false})},400)}
 }
+function rememberRecommendations(){try{if(current.length)sessionStorage.setItem(REC_STORAGE,JSON.stringify({owner:profileOwner,results:current}));else sessionStorage.removeItem(REC_STORAGE)}catch(_){}}
 function movieRecord(movie){return {id:Number(movie.id),title:String(movie.title||movie.name||'').slice(0,200),release_date:String(movie.release_date||'').slice(0,20),poster_path:typeof movie.poster_path==='string'?movie.poster_path.slice(0,200):null,overview:typeof movie.overview==='string'?movie.overview.slice(0,3000):'',genre_ids:Array.isArray(movie.genre_ids)?movie.genre_ids:[]}}
 const hydrationAttempted=new WeakSet(), hydrationQueue=[];
 let hydrationActive=0;
@@ -133,19 +135,14 @@ async function loadFeatured(){
     box.replaceChildren();
     for(const movie of candidates.slice(0,50)){
       const title=movie.title||'Movie',link=el('a',undefined,'featured-poster');link.href='https://www.themoviedb.org/movie/'+movie.id;link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Explore '+title+' on TMDB');
-      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));updatePosterStatus();updateCarouselControls()};link.append(poster);box.append(link);
+      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));updatePosterStatus()};link.append(poster);box.append(link);
     }
     if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));
-    updatePosterStatus();updateCarouselControls();
-  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='';updateCarouselControls()}
+    updatePosterStatus();
+  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='' }
 }
-function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · use the arrows or scroll to explore':''}
+function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · scroll or swipe to explore':''}
 let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterHovered=false,posterTimer=null;
-function updateCarouselControls(){
-  const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth;
-  $('postersPrevious').disabled=box.scrollLeft<=5;$('postersNext').disabled=max<=5||box.scrollLeft>=max-5;
-  const toggle=$('postersToggle');toggle.disabled=max<=5;toggle.textContent=posterAutoPlaying?'Pause':'Play';toggle.setAttribute('aria-label',(posterAutoPlaying?'Pause':'Play')+' automatic poster scrolling');
-}
 function advancePosterCarousel(){
   const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth,rect=box.getBoundingClientRect();
   if(!posterAutoPlaying||posterHovered||document.hidden||max<=5||rect.bottom<=0||rect.top>=window.innerHeight)return;
@@ -158,20 +155,23 @@ function startPosterAutoplay(){
   const box=$('featuredPosters');
   box.addEventListener('pointerenter',event=>{if(event.pointerType!=='touch')posterHovered=true});
   box.addEventListener('pointerleave',()=>{posterHovered=false});
-  box.addEventListener('focusin',()=>{if(posterAutoPlaying){posterAutoPlaying=false;updateCarouselControls()}});
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change',event=>{if(event.matches){posterAutoPlaying=false;updateCarouselControls()}});
-  posterTimer=setInterval(advancePosterCarousel,3500);
+  box.addEventListener('focusin',()=>{posterAutoPlaying=false});
+  box.addEventListener('pointerdown',event=>{if(event.pointerType==='touch')posterAutoPlaying=false});
+  box.addEventListener('keydown',event=>{if(event.target===box&&event.code==='Space'){event.preventDefault();posterAutoPlaying=!posterAutoPlaying}});
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change',event=>{if(event.matches)posterAutoPlaying=false});
+  posterTimer=setInterval(advancePosterCarousel,1800);
 }
 
-function movePosters(direction){const box=$('featuredPosters');box.scrollBy({left:direction*Math.max(box.clientWidth*.8,100),behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}
 function movieListText(movies){return movies.map(movie=>{const year=/^\d{4}/.test(movie.release_date||'')?' ('+movie.release_date.slice(0,4)+')':'';return '• '+(movie.title||movie.name||'Movie')+year}).join('\n')}
 function composeShareMessage(watched,recommendations,includeWatched,includeRecommended,origin){
   const parts=[];
-  if(includeWatched&&watched.length)parts.push('Movies I’ve watched:\n'+movieListText(watched));
   if(includeRecommended&&recommendations.length)parts.push('Movies recommended for me:\n'+movieListText(recommendations));
+  if(includeWatched&&watched.length)parts.push('Movies I’ve watched:\n'+movieListText(watched));
   return parts.length?'A few movie ideas for us!\n\n'+parts.join('\n\n')+'\n\nFind your own picks: '+origin+'/':'';
 }
 function updateShareMessage(){
+  $('shareRecCount').textContent=current.length?'('+current.length+')':'';
+  $('shareRecHint').textContent=current.length?'':'No current recommendations yet. Select Find my movies first to include them.';
   const message=composeShareMessage(profile.watched,current,$('shareWatched').checked,$('shareRecommended').checked,location.origin);
   $('shareText').value=message;$('shareStatus').textContent=message?'':'Add a watched movie or find recommendations to share.';
   updateShareButtons();
@@ -226,7 +226,7 @@ function renderCards(){
     body.append(actions,save);card.append(body);box.append(card);
   }
 }
-async function recommend(){if(!profile.watched.length&&!profile.decades.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched, choose a decade, or select In theaters.';return}if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}$('recommend').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';current=[];renderCards();try{const {saved,...preferences}=profile;const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(preferences)});current=data.results||[];renderCards();$('recommendStatus').textContent=[current.length?`Found ${current.length} ${current.length===1?'movie':'movies'} for you.`:'No matches found. Try another genre or service.',data.warning||''].filter(Boolean).join(' ');location.hash='discover'}catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false}}
+async function recommend(){if(!profile.watched.length&&!profile.decades.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched, choose a decade, or select In theaters.';return}if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}$('recommend').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';const ownerAtRequest=profileOwner;try{const {saved,...preferences}=profile;const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(preferences)});if(ownerAtRequest!==profileOwner)return;current=Array.isArray(data.results)?data.results.slice(0,10):[];rememberRecommendations();renderCards();$('recommendStatus').textContent=[current.length?`Found ${current.length} ${current.length===1?'movie':'movies'} for you.`:'No matches found. Try another genre or service.',data.warning||''].filter(Boolean).join(' ');location.hash='discover'}catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false}}
 function openDialog(){$('authDialog').showModal()}
 async function authInit(){if(!config.authConfigured||!window.supabase){$('authNote').textContent='Sign in is not configured yet. Your selections are saved in this browser.';$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}supabaseClient=window.supabase.createClient(config.supabaseUrl,config.supabaseAnonKey);const result=await supabaseClient.auth.getSession();session=result.data.session;await updateAccount();supabaseClient.auth.onAuthStateChange((_event,newSession)=>{session=newSession;setTimeout(()=>updateAccount(),0)})}
 async function updateAccount(){
@@ -250,7 +250,8 @@ async function updateAccount(){
       for(const [id,rating] of Object.entries(guestStars)){account.starRatings[id]=rating;delete account.ratings[id]}
       profile=account;
     }else if(profileOwner&&profileOwner!==owner)profile=blank();
-    loadedAccountId=owner;persist();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
+    if(profileOwner&&profileOwner!==owner){current=[];rememberRecommendations();$('recommendStatus').textContent='Add a movie, choose a decade, or select In theaters to get started.'}
+    loadedAccountId=owner;persist();rememberRecommendations();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
   }catch(e){$('configWarning').textContent='Could not load your saved profile: '+e.message;$('configWarning').hidden=false}
 }
 async function login(provider){if(!supabaseClient)return;const options={redirectTo:location.origin+'/'};if(provider==='google')options.queryParams={prompt:'select_account'};const {error}=await supabaseClient.auth.signInWithOAuth({provider,options});if(error)$('authNote').textContent=error.message}
@@ -262,15 +263,14 @@ async function signOutAccount(){
     const {error}=await supabaseClient.auth.signOut({scope:'local'});if(error)throw error;
     session=null;saveQueue=Promise.resolve();saveVersion=0;savedVersion=0;profile=blank();profileOwner='';loadedAccountId=null;
     try{localStorage.removeItem(STORAGE);localStorage.removeItem(OWNER_STORAGE)}catch(_){}
-    current=[];renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';$('saveMessage').textContent='';renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
+    current=[];rememberRecommendations();renderCards();renderWatched();renderSaved();$('savedStatus').textContent='';$('saveMessage').textContent='';renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
     $('recommendStatus').textContent='Add a movie, choose a decade, or select In theaters to get started.';await updateAccount();
   }catch(e){$('configWarning').textContent='Could not finish signing out or saving your changes. Please try again. '+e.message;$('configWarning').hidden=false}
   finally{button.disabled=false}
 }
 $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g,'').slice(0,5);e.target.value=zip;$('zipStatus').textContent=zip&&zip.length<5?('Enter all 5 digits.'+(profile.zipCode?' Your saved ZIP is still in use.':'')):'';if(zip.length===5||zip.length===0){profile.zipCode=zip;persist();renderCards()}});
-$('postersToggle').onclick=()=>{posterAutoPlaying=!posterAutoPlaying;updateCarouselControls()};$('postersPrevious').onclick=()=>movePosters(-1);$('postersNext').onclick=()=>movePosters(1);$('featuredPosters').addEventListener('scroll',updateCarouselControls);window.addEventListener?.('resize',updateCarouselControls);
 $('shareMovies').onclick=()=>{updateShareMessage();$('shareDialog').showModal()};$('closeShare').onclick=()=>$('shareDialog').close();$('shareWatched').onchange=updateShareMessage;$('shareRecommended').onchange=updateShareMessage;$('shareText').addEventListener('input',updateShareButtons);$('nativeShare').onclick=shareMovies;$('copyShare').onclick=copyShareMessage;
 $('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=recommend;$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
-async function init(){startPosterAutoplay();renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{loadFeatured();const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
+async function init(){startPosterAutoplay();renderCards();if(current.length)$('recommendStatus').textContent=`Showing your latest ${current.length} ${current.length===1?'recommendation':'recommendations'}.`;renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{loadFeatured();const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}
 init();
 
