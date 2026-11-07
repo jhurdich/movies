@@ -131,13 +131,17 @@ async function loadFeatured(){
     const candidates=(data.results||[]).filter(movie=>Number.isSafeInteger(movie.id)&&movie.id>0&&typeof movie.poster_path==='string'&&/^\/[\w-]+\.(jpg|png|webp)$/i.test(movie.poster_path));
     for(let i=candidates.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[candidates[i],candidates[j]]=[candidates[j],candidates[i]]}
     box.replaceChildren();
-    for(const movie of candidates.slice(0,8)){
+    for(const movie of candidates.slice(0,50)){
       const title=movie.title||'Movie',link=el('a',undefined,'featured-poster');link.href='https://www.themoviedb.org/movie/'+movie.id;link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Explore '+title+' on TMDB');
-      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w342'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'))};link.append(poster);box.append(link);
+      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));updatePosterStatus();updateCarouselControls()};link.append(poster);box.append(link);
     }
     if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));
-  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'))}
+    updatePosterStatus();updateCarouselControls();
+  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='';updateCarouselControls()}
 }
+function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · use the arrows or scroll to explore':''}
+function updateCarouselControls(){const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth;$('postersPrevious').disabled=box.scrollLeft<=5;$('postersNext').disabled=max<=5||box.scrollLeft>=max-5}
+function movePosters(direction){const box=$('featuredPosters');box.scrollBy({left:direction*Math.max(box.clientWidth*.8,100),behavior:window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}
 function movieListText(movies){return movies.map(movie=>{const year=/^\d{4}/.test(movie.release_date||'')?' ('+movie.release_date.slice(0,4)+')':'';return '• '+(movie.title||movie.name||'Movie')+year}).join('\n')}
 function composeShareMessage(watched,recommendations,includeWatched,includeRecommended,origin){
   const parts=[];
@@ -242,6 +246,7 @@ async function signOutAccount(){
   finally{button.disabled=false}
 }
 $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g,'').slice(0,5);e.target.value=zip;$('zipStatus').textContent=zip&&zip.length<5?('Enter all 5 digits.'+(profile.zipCode?' Your saved ZIP is still in use.':'')):'';if(zip.length===5||zip.length===0){profile.zipCode=zip;persist();renderCards()}});
+$('postersPrevious').onclick=()=>movePosters(-1);$('postersNext').onclick=()=>movePosters(1);$('featuredPosters').addEventListener('scroll',updateCarouselControls);window.addEventListener?.('resize',updateCarouselControls);
 $('shareMovies').onclick=()=>{updateShareMessage();$('shareDialog').showModal()};$('closeShare').onclick=()=>$('shareDialog').close();$('shareWatched').onchange=updateShareMessage;$('shareRecommended').onchange=updateShareMessage;$('shareText').addEventListener('input',updateShareButtons);$('nativeShare').onclick=shareMovies;$('copyShare').onclick=copyShareMessage;
 $('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=recommend;$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
 async function init(){renderWatched();renderSaved();renderProviders();renderTypes();renderGenres();renderDecades();renderZip();try{config=await request('/api/config');if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.'}else{loadFeatured();const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}await authInit()}catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true}}

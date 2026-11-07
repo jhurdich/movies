@@ -172,7 +172,18 @@ async function recommend(value) {
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://localhost');const p=u.pathname;
  if(req.method==='GET'&&p==='/api/config')return send(res,200,{tmdbConfigured:!!(TMDB_API_KEY||TMDB_READ_TOKEN),supabaseUrl:SUPABASE_URL,supabaseAnonKey:SUPABASE_ANON_KEY,authConfigured:!!(SUPABASE_URL&&SUPABASE_ANON_KEY)});
  if(req.method==='GET'&&p==='/api/search'){let q=(u.searchParams.get('q')||'').trim();if(q.length<2)return send(res,200,{results:[]});const v=await tmdb('/search/movie',{query:q.slice(0,100),language:'en-US',include_adult:'false'});return send(res,200,{results:v.results||[]});}
- if(req.method==='GET'&&p==='/api/featured'){const page=1+Math.floor(Math.random()*5);const data=await tmdb('/movie/popular',{language:'en-US',region:'US',page});return send(res,200,{results:(data.results||[]).filter(movie=>!movie.adult&&movie.poster_path).map(movie=>({id:movie.id,title:movie.title,poster_path:movie.poster_path}))});}
+ if(req.method==='GET'&&p==='/api/featured'){
+  const pages=Array.from({length:10},(_,i)=>i+1);
+  for(let i=pages.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pages[i],pages[j]]=[pages[j],pages[i]]}
+  const responses=await Promise.allSettled(pages.slice(0,4).map(page=>tmdb('/movie/popular',{language:'en-US',region:'US',page})));
+  if(responses.every(result=>result.status==='rejected'))throw fail('Movie posters are temporarily unavailable.',503);
+  const seen=new Set(),results=[];
+  for(const response of responses)if(response.status==='fulfilled')for(const movie of response.value.results||[]){
+    if(movie.adult||!movie.poster_path||!Number.isSafeInteger(movie.id)||movie.id<=0||seen.has(movie.id))continue;
+    seen.add(movie.id);results.push({id:movie.id,title:movie.title,poster_path:movie.poster_path});
+  }
+  return send(res,200,{results});
+ }
  if(req.method==='GET'&&p==='/api/genres'){return send(res,200,await tmdb('/genre/movie/list',{language:'en-US'}));}
  if(req.method==='GET'&&p==='/api/providers'){const v=await tmdb('/watch/providers/movie',{language:'en-US',watch_region:'US'});return send(res,200,{results:v.results||[]});}
  if(req.method==='GET'&&/^\/api\/movies\/\d+$/.test(p)){const v=await tmdb('/movie/'+p.split('/').pop(),{language:'en-US'});return send(res,200,{movie:v});}
