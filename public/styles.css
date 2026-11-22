@@ -160,3 +160,33 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 
 
 .remove-recommendation{width:100%;margin-top:8px;padding:10px;border:1px solid #dfe3d9;border-radius:4px;background:#fff;color:#5b655a;font-size:12px}.remove-recommendation:hover{background:#f5f6f1}.remove-recommendation:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
+
+/* Refined type, spacing, and surfaces for a cohesive cinema experience. */
+:root{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#202b2a;background:#f7f7f4;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{line-height:1.55}
+h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:-.035em}
+h1,h2{font-weight:650}
+.site-header{background:#0d1822;border-color:#263540}
+.head-inner nav{font-size:13px;font-weight:500;letter-spacing:.01em}
+.head-inner nav a{transition:color .18s ease}.head-inner nav a:hover{color:#f4c783}
+.button{border-radius:8px;font-weight:600;letter-spacing:.005em;transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease}
+.button.primary{background:#e8b970;color:#18232a}.button.primary:hover{background:#f3c989}
+.hero h1{font-weight:650;letter-spacing:-.045em;line-height:1.08}.hero h1 em{font-weight:500}
+.hero-copy{font-size:15px;line-height:1.65;color:#e1e8eb}.eyebrow{font-size:10px;letter-spacing:.17em;font-weight:700}
+.featured-section{background:#101c25}.featured-poster{border-radius:7px}.featured-cta{border-radius:8px}
+.setup{background:#f7f7f4}.setup,.discover{padding-top:64px}.section-intro{margin-bottom:32px}.section-intro h2,.ending h2{font-size:clamp(29px,3.2vw,38px);line-height:1.16;letter-spacing:-.04em}.section-intro>p{font-size:14px;color:#5e6b67;line-height:1.7}
+.panel,.saved-panel,.card{border:1px solid #dce3df;border-radius:12px;box-shadow:0 6px 22px rgba(23,43,38,.045)}
+.panel{padding:30px}.panel h3{font-size:16px;letter-spacing:-.02em;font-weight:650}.panel-heading p,.hint,.genre-help,.saved-heading p,.saved-empty{color:#5f6d67;line-height:1.65;font-size:13px}
+.step{background:#e8eeeb;color:#4d675b;font-size:11px;font-weight:700}
+.input-wrap,select,.zip-field input{border-color:#cfdad4;border-radius:8px}.input-wrap:focus-within{outline:3px solid #cba362;outline-offset:2px}.input-wrap input{font-size:14px}
+.genre-option,.decade-option,.provider,.chip{border-radius:8px}.provider,.chip{font-size:12px}
+.recommend-bar{border-radius:12px;background:#f8eddb;border-color:#ead8bb}.recommend-bar strong{font-size:21px;letter-spacing:-.025em}.recommend-bar p{font-size:13px}
+.discover{background:#eff3f0}.results-bar .status{color:#53655b;line-height:1.6}.result-tools{gap:10px}
+.card{overflow:hidden}.card-body{padding:22px}.card h3{font-size:21px;line-height:1.25;font-weight:650;letter-spacing:-.03em}.card p{font-size:13px;line-height:1.65;color:#596861}.card .why{border-radius:7px}.card-meta{font-size:11px;letter-spacing:.1em}.availability{font-size:12px;line-height:1.6}
+.save-movie,.remove-recommendation,.remove-saved,.save-all,.share-trigger,.share-copy{border-radius:8px;font-size:12px;font-weight:600}.save-movie:hover,.remove-recommendation:hover,.remove-saved:hover,.save-all:hover,.share-trigger:hover,.share-copy:hover{background:#edf3ee}
+.saved-heading h3{font-size:21px;letter-spacing:-.025em}.saved-overview,.suggestion-search>p{font-size:13px;line-height:1.65}.saved-panel{padding:28px 30px}
+dialog{border-radius:14px;box-shadow:0 24px 70px #0004}dialog>p{color:#5f6d67;line-height:1.65}
+footer{background:#101c25}.foot p{font-size:12px;line-height:1.65}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #bd8f45;outline-offset:3px}
+@media(max-width:760px){.setup,.discover{padding-top:44px}.panel,.saved-panel{padding:22px}.section-intro{gap:14px}.hero-copy{font-size:14px}.results-bar{gap:18px}.result-tools{justify-content:flex-start}.card-body{padding:20px}}
+@media(prefers-reduced-motion:reduce){.button,.head-inner nav a{transition:none}}
