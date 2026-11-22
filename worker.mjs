@@ -117,10 +117,10 @@ export default {
   for (const movie of theaterResults) add(movie, 1);
   for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
     if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
-    add(movie, stars[seeds[i]] === 5 ? 5 : liked.includes(seeds[i]) ? 4 : 2, true);
+    add(movie, stars[seeds[i]] === 5 ? 12 : liked.includes(seeds[i]) ? 4 : 2, true);
   }
   const preferences = {};
-  for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 1.25 : 1);
+  for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 4 : 1);
   // Check a mix of genres before spending the remaining request budget on availability.
   const candidateLimit = Math.min(32, Math.max(0, 48 - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? theaterBranches.length + 1 : 0) - seeds.length - (comingOfAge ? 1 : 0)));
   const selectedGenres = [...genres.map(String), ...(comingOfAge ? ['coming-of-age'] : [])];

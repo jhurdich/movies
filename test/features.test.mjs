@@ -567,3 +567,8 @@ test('shared recommendations seed movies from both lists',async()=>{
   const seedPaths=[];globalThis.fetch=async url=>{const p=new URL(url).pathname;if(p.endsWith('/recommendations')){seedPaths.push(p);return Response.json({results:[]})}if(p.endsWith('/discover/movie'))return Response.json({results:[]});return Response.json({results:{}})};
   try{const response=await worker.fetch(request({watched:[{id:1},{id:2},{id:3}],starRatings:{1:5,2:5,3:4},shared_seed_ids:[3,1],genres:[18],types:['flatrate']}),{TMDB_API_KEY:'fake'});assert.equal(response.status,200);assert.deepEqual(seedPaths.slice(0,2),['/3/movie/3/recommendations','/3/movie/1/recommendations'])}finally{globalThis.fetch=originalFetch}
 });
+
+test('a five-star movie outweighs two four-star movies for related recommendations',async()=>{
+  globalThis.fetch=async url=>{const p=new URL(url).pathname;const five={id:10,title:'Five-star match',genre_ids:[18]},four={id:11,title:'Four-star match',genre_ids:[28]};if(p.endsWith('/discover/movie'))return Response.json({results:[four,five]});if(p.endsWith('/movie/1/recommendations'))return Response.json({results:[five]});if(p.endsWith('/movie/2/recommendations')||p.endsWith('/movie/3/recommendations'))return Response.json({results:[four]});if(p.endsWith('/watch/providers'))return Response.json({results:{US:{flatrate:[{provider_id:9,provider_name:'Service'}]}}});return Response.json({results:[]})};
+  try{const response=await worker.fetch(request({watched:[{id:1,genre_ids:[18]},{id:2,genre_ids:[28]},{id:3,genre_ids:[28]}],starRatings:{1:5,2:4,3:4},types:['flatrate']}),{TMDB_API_KEY:'fake'});assert.equal(response.status,200);assert.deepEqual((await response.json()).results.map(movie=>movie.id),[10,11])}finally{globalThis.fetch=originalFetch}
+});
