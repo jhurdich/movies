@@ -145,13 +145,11 @@ async function loadFeatured(){
     box.replaceChildren();
     for(const movie of candidates.slice(0,50)){
       const title=movie.title||'Movie',link=el('a',undefined,'featured-poster');link.href='https://www.themoviedb.org/movie/'+movie.id;link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Explore '+title+' on TMDB');
-      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));updatePosterStatus()};link.append(poster);box.append(link);
+      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'))};link.append(poster);box.append(link);
     }
     if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));
-    updatePosterStatus();
-  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('posterStatus').textContent='' }
+  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message')) }
 }
-function updatePosterStatus(){const count=$('featuredPosters').querySelectorAll('.featured-poster').length;$('posterStatus').textContent=count?count+' '+(count===1?'movie':'movies')+' · moving automatically':''}
 let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterFocused=false,posterTimer=null;
 function advancePosterCarousel(){
   const box=$('featuredPosters'),max=box.scrollWidth-box.clientWidth,rect=box.getBoundingClientRect();
