@@ -53,7 +53,7 @@ async function recommend(value) {
     ...Object.keys(stars).filter(id => stars[id] >= 4).sort((a,b) => stars[b] - stars[a]).map(Number),
     ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === 1).map(Number)
   ])];
-  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number)]);
+  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number), ...ids(value?.exclude)]);
   const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
@@ -61,7 +61,8 @@ async function recommend(value) {
   const wantsTheaters = p.types.includes('theater');
   const streamingTypes = p.types.filter(type => type !== 'theater');
   const wantsStreaming = streamingTypes.length > 0 || !wantsTheaters;
-  const base = {language:'en-US', include_adult:'false', region:'US', sort_by:'popularity.desc', page:1};
+  const page = Number.isInteger(value?.page) ? Math.max(1, Math.min(500, value.page)) : 1;
+  const base = {language:'en-US', include_adult:'false', region:'US', sort_by:'popularity.desc', page};
   const branches = [];
   if (genres.length) branches.push({kind:'genres', params:{with_genres:genres.join('|')}});
   if (comingOfAge) {
@@ -97,7 +98,7 @@ async function recommend(value) {
   const [streams, nowPlaying, ...related] = await Promise.all([
     wantsStreaming ? Promise.allSettled(streamBranches.map(branch => tmdb('/discover/movie', {...streamParams,...branch.params}))) : Promise.resolve([]),
     wantsTheaters ? tmdb('/movie/now_playing', {language:'en-US', region:'US'}).catch(() => null) : Promise.resolve(null),
-    ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page:1}).catch(() => ({results:[]})))
+    ...seeds.map(id => tmdb('/movie/' + id + '/recommendations', {language:'en-US',page}).catch(() => ({results:[]})))
   ]);
   const discoveryIncomplete = streams.some(result => result.status === 'rejected');
   if (wantsStreaming && streams.length && streams.every(result => result.status === 'rejected') && !wantsTheaters) throw fail('Movie searches are temporarily unavailable.',503);
@@ -239,4 +240,5 @@ const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'htt
  }catch(err){console.error(err.message);send(res,err.status||500,{error:err.status?err.message:'Unexpected server error.'})}});
 if(require.main===module)server.listen(Number(process.env.PORT)||3000,()=>console.log('Listening on http://localhost:'+(process.env.PORT||3000)));
 module.exports={server,sanitizedProfile,recommend};
+
 

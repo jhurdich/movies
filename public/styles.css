@@ -157,3 +157,6 @@ h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-fa
 .zoom-large .hero-content{padding:28px 0 22px}
 
 .suggestion-search{margin:20px 0 6px;max-width:560px}.suggestion-search>label{display:block;font-size:13px;font-weight:700;color:#26372b}.suggestion-search>p{margin:6px 0 10px;color:#6f786e;font-size:12px;line-height:1.5}.suggested-results .search-result:disabled{color:#859087;cursor:default}.suggested-results .hint{margin:8px 0}
+
+
+.remove-recommendation{width:100%;margin-top:8px;padding:10px;border:1px solid #dfe3d9;border-radius:4px;background:#fff;color:#5b655a;font-size:12px}.remove-recommendation:hover{background:#f5f6f1}.remove-recommendation:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
