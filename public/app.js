@@ -65,6 +65,9 @@ function renderSaved(){
     if(!movie.overview||!movie.poster_path)hydrateSaved(movie);
     const actions=el('div',undefined,'saved-actions'),id=Number(movie.id);
     if(Number.isSafeInteger(id)&&id>0){const link=el('a','Where to watch ↗');link.href='https://www.themoviedb.org/movie/'+id+'/watch?locale=US';link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Where to watch '+title);actions.append(link)}
+    const watched=el('button','Mark as watched','mark-watched');watched.type='button';watched.setAttribute('aria-label','Move '+title+' to watched movies');
+    watched.onclick=()=>{if(!profile.watched.some(item=>Number(item.id)===id)){if(profile.watched.length>=500){$('savedStatus').textContent='Your watched list is full. Remove a movie from it first.';return}profile.watched.push(movieRecord(movie))}profile.saved=profile.saved.filter(item=>Number(item.id)!==id);persist();renderSaved();renderWatched();renderCards();$('saveMessage').textContent='';$('savedStatus').textContent=title+' moved to watched movies. You can rate it there.'};
+    actions.append(watched);
     const remove=el('button','Remove','remove-saved');remove.type='button';remove.setAttribute('aria-label','Remove '+title+' from saved movies');
     remove.onclick=()=>{profile.saved=profile.saved.filter(item=>Number(item.id)!==id);persist();renderSaved();renderCards();$('saveMessage').textContent='';$('savedStatus').textContent=title+' removed from saved movies.'};
     actions.append(remove);details.append(actions);row.append(poster,details);box.append(row);
