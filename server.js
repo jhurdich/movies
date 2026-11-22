@@ -28,7 +28,7 @@ function sanitizedProfile(value) {
  const watched=movies(v.watched),saved=movies(v.saved);
  const ratings={};for(const [k,n] of Object.entries(v.ratings||{}).slice(0,1000)) if(/^\d{1,10}$/.test(k)&&(n===1||n===-1)) ratings[k]=n;
  const types=(Array.isArray(v.types)?v.types:[]).filter(x=>['flatrate','free','ads','rent','buy','theater'].includes(x));
- return {watched,saved,genres:cleanGenres(v.genres),decades:ids(v.decades).filter(n=>n>=1950&&n<=2020&&n%10===0),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
+ return {watched,saved,dismissed:[...new Set((Array.isArray(v.dismissed)?v.dismissed:[]).map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))].slice(0,5000),genres:cleanGenres(v.genres),decades:ids(v.decades).filter(n=>n>=1950&&n<=2020&&n%10===0),providers:ids(v.providers),ratings,starRatings:cleanStars(v.starRatings),types,zipCode:typeof v.zipCode==='string'&&/^\d{5}$/.test(v.zipCode)?v.zipCode:''};
 }
 async function profileRequest(req,method,profile) {
  if(!SUPABASE_URL||!SUPABASE_ANON_KEY) throw Object.assign(new Error('Account storage is not configured.'),{status:503});
@@ -53,7 +53,7 @@ async function recommend(value) {
     ...Object.keys(stars).filter(id => stars[id] >= 4).sort((a,b) => stars[b] - stars[a]).map(Number),
     ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === 1).map(Number)
   ])];
-  const excluded = new Set([...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number), ...ids(value?.exclude)]);
+  const excluded = new Set([...p.dismissed, ...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number), ...ids(value?.exclude)]);
   const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');

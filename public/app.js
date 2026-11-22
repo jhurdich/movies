@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const blank=()=>({watched:[],saved:[],genres:[],decades:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
+const blank=()=>({watched:[],saved:[],dismissed:[],genres:[],decades:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
 let recommendationSeen=[], recommendationPage=1;
 let profile=blank(), providers=[], genres=[], current=[], currentWarning='', config={}, supabaseClient=null, session=null, searchSeq=0, suggestedSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
@@ -13,6 +13,8 @@ try{const stored=JSON.parse(sessionStorage.getItem(REC_STORAGE)||'null');if(stor
 // Do not display a cached signed-in profile if this browser was already idle.
 try{const last=Number(localStorage.getItem(IDLE_PREFIX+profileOwner));if(profileOwner&&last>0&&Date.now()-last>=IDLE_LIMIT){profile=blank();current=[];currentWarning=''}}catch(_){}
 if(!Array.isArray(profile.saved))profile.saved=[];
+if(!Array.isArray(profile.dismissed))profile.dismissed=[];
+current=current.filter(movie=>!profile.dismissed.includes(Number(movie.id)));
 if(!Array.isArray(profile.decades))profile.decades=[];
 if(!profile.ratings||typeof profile.ratings!=='object'||Array.isArray(profile.ratings))profile.ratings={};
 if(!profile.starRatings||typeof profile.starRatings!=='object'||Array.isArray(profile.starRatings))profile.starRatings={};
@@ -252,7 +254,7 @@ function renderCards(){
     if(movie.watch_url){try{const url=new URL(movie.watch_url);if(url.protocol==='https:'){const a=el('a','Where to watch ↗');a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';actions.append(a)}}catch(_){}}
     const isSaved=profile.saved.some(item=>Number(item.id)===Number(movie.id)),save=el('button',isSaved?'✓ Saved for later':'☆ Save for later','save-movie');
     save.type='button';save.dataset.saveId=String(movie.id);save.setAttribute('aria-label','Save '+movie.title+' for later');save.setAttribute('aria-pressed',String(isSaved));save.onclick=()=>toggleSaved(movie);
-    const remove=el('button','Remove recommendation','remove-recommendation');remove.type='button';remove.setAttribute('aria-label','Remove '+movie.title+' from recommendations');remove.onclick=()=>{current=current.filter(item=>Number(item.id)!==Number(movie.id));rememberRecommendations();renderCards();$('recommendStatus').textContent=movie.title+' removed. Select More recommendations for more ideas.'};
+    const remove=el('button','Remove recommendation','remove-recommendation');remove.type='button';remove.setAttribute('aria-label','Remove '+movie.title+' from recommendations');remove.onclick=()=>{if(!window.confirm('Remove '+movie.title+' from future recommendations? This choice will be remembered.'))return;const id=Number(movie.id);if(!profile.dismissed.includes(id)){if(profile.dismissed.length>=5000){$('recommendStatus').textContent='Your excluded list is full; this movie was not removed.';return}profile.dismissed.push(id);persist()}current=current.filter(item=>Number(item.id)!==id);rememberRecommendations();renderCards();$('recommendStatus').textContent=movie.title+' removed from future recommendations.'};
     body.append(actions,save,remove);card.append(body);box.append(card);
   }
 }
@@ -265,7 +267,7 @@ async function recommend(more=false){
     const nextPage=more?Math.min(500,recommendationPage+1):1;
     const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify({...preferences,exclude:more?recommendationSeen:[],page:nextPage})});
     if(ownerAtRequest!==profileOwner)return;
-    const results=Array.isArray(data.results)?data.results.slice(0,10):[];
+    const results=Array.isArray(data.results)?data.results.filter(movie=>!profile.dismissed.includes(Number(movie.id))).slice(0,10):[];
     if(results.length||!more){current=results;recommendationPage=nextPage;recommendationSeen=[...new Set([...(more?recommendationSeen:[]),...results.map(movie=>Number(movie.id))])].slice(-100)}
     const missing=Array.isArray(data.missing_genres)?data.missing_genres.map(id=>id==='coming-of-age'?'Coming of age':(genres.find(genre=>String(genre.id)===String(id))?.name||'Genre '+id)):[];
     currentWarning=[data.warning||'',missing.length?'Not represented: '+missing.join(', ')+'.':''].filter(Boolean).join(' ');rememberRecommendations();renderCards();
@@ -334,8 +336,9 @@ async function updateAccount(){
   try{
     const data=await request('/api/profile');if(!session||session.user?.id!==owner)return;
     if(data.profile){
-      const guestSaved=wasGuest?profile.saved:[],guestWatched=wasGuest?profile.watched:[],guestRatings=wasGuest?profile.ratings:{},guestStars=wasGuest?profile.starRatings:{},account={...blank(),...data.profile};
+      const guestDismissed=wasGuest?profile.dismissed:[],guestSaved=wasGuest?profile.saved:[],guestWatched=wasGuest?profile.watched:[],guestRatings=wasGuest?profile.ratings:{},guestStars=wasGuest?profile.starRatings:{},account={...blank(),...data.profile};
       if(!Array.isArray(account.saved))account.saved=[];
+      account.dismissed=[...new Set([...(Array.isArray(account.dismissed)?account.dismissed:[]),...guestDismissed])].slice(0,5000);
       if(!Array.isArray(account.decades))account.decades=[];
       if(!Array.isArray(account.watched))account.watched=[];
       if(!account.ratings||typeof account.ratings!=='object'||Array.isArray(account.ratings))account.ratings={};
@@ -355,12 +358,13 @@ async function updateAccount(){
       const merged={...profile};
       for(const key of ['genres','decades','providers','types'])if(Array.isArray(pending[key]))merged[key]=pending[key];
       if(typeof pending.zipCode==='string')merged.zipCode=pending.zipCode;
+      merged.dismissed=[...new Set([...(profile.dismissed||[]),...(Array.isArray(pending.dismissed)?pending.dismissed:[])])].slice(0,5000);
       merged.watched=mergeMovies(profile.watched,pending.watched);merged.saved=mergeMovies(profile.saved,pending.saved);
       merged.ratings={...profile.ratings,...(pending.ratings||{})};merged.starRatings={...profile.starRatings,...(pending.starRatings||{})};
       profile=merged;$('configWarning').textContent='Recovered unsynced choices from this browser. They will be saved to your account.';$('configWarning').hidden=false;
     }
     if(profileOwner&&profileOwner!==owner){current=[];currentWarning='';recommendationSeen=[];recommendationPage=1;rememberRecommendations();$('recommendStatus').textContent='Add a movie, choose genres or decades, or select In theaters to get started.'}
-    loadedAccountId=owner;persist();rememberRecommendations();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
+    current=current.filter(movie=>!profile.dismissed.includes(Number(movie.id)));loadedAccountId=owner;persist();rememberRecommendations();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
   }catch(e){$('configWarning').textContent='Could not load your saved profile: '+e.message;$('configWarning').hidden=false}
 }
 async function login(provider){if(!supabaseClient)return;try{sessionStorage.setItem(LOGIN_INTENT,'1')}catch(_){}const options={redirectTo:location.origin+'/'};if(provider==='google')options.queryParams={prompt:'select_account'};const {error}=await supabaseClient.auth.signInWithOAuth({provider,options});if(error){try{sessionStorage.removeItem(LOGIN_INTENT)}catch(_){}$('authNote').textContent=error.message}}
