@@ -554,3 +554,16 @@ test('recommendation history navigates both directions and filters watched and r
   ctx.show(2);assert.deepEqual(Array.from(ctx.current,m=>m.id),[5]);
   ctx.show(3);assert.equal(ctx.pageIndex,2);
 });
+
+test('friend list parsing extracts watched titles from a shared text',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const code=source.slice(source.indexOf('function parseFriendMovieList('),source.indexOf('\nfunction normalizeMovieTitle',source.indexOf('function parseFriendMovieList(')));
+  const ctx={};runInNewContext(code+'\nthis.parse=parseFriendMovieList;',ctx);
+  const result=ctx.parse('A few movie ideas for us!\n\nMovies recommended for me:\n• Other (2022)\n\nMovies I’ve watched:\n• Arrival (2016)\n• Dune (2021)\n\nFind your own picks: https://example.com/');
+  assert.deepEqual(Array.from(result,item=>[item.title,item.year]),[['Arrival','2016'],['Dune','2021']]);
+});
+
+test('shared recommendations seed movies from both lists',async()=>{
+  const seedPaths=[];globalThis.fetch=async url=>{const p=new URL(url).pathname;if(p.endsWith('/recommendations')){seedPaths.push(p);return Response.json({results:[]})}if(p.endsWith('/discover/movie'))return Response.json({results:[]});return Response.json({results:{}})};
+  try{const response=await worker.fetch(request({watched:[{id:1},{id:2},{id:3}],starRatings:{1:5,2:5,3:4},shared_seed_ids:[3,1],genres:[18],types:['flatrate']}),{TMDB_API_KEY:'fake'});assert.equal(response.status,200);assert.deepEqual(seedPaths.slice(0,2),['/3/movie/3/recommendations','/3/movie/1/recommendations'])}finally{globalThis.fetch=originalFetch}
+});

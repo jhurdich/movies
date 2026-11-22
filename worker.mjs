@@ -22,7 +22,8 @@ export default {
     ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === 1).map(Number)
   ])];
   const excluded = new Set([...p.dismissed, ...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number), ...ids(value?.exclude)]);
-  const seeds = [...new Set([...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
+  const sharedSeeds = ids(value?.shared_seed_ids).filter(id => watched.includes(id) && !notPositive(id));
+  const seeds = [...new Set([...sharedSeeds, ...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
   const decades = p.decades;
