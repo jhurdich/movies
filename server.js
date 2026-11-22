@@ -55,7 +55,11 @@ async function recommend(value) {
   ])];
   const excluded = new Set([...p.dismissed, ...watched, ...Object.keys(p.ratings).map(Number), ...Object.keys(stars).map(Number), ...ids(value?.exclude)]);
   const sharedSeeds = ids(value?.shared_seed_ids).filter(id => watched.includes(id) && !notPositive(id));
-  const seeds = [...new Set([...sharedSeeds, ...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8);
+  const negative = [...new Set([...Object.keys(stars).filter(id => stars[id] <= 2).sort((a,b) => stars[a] - stars[b]).map(Number), ...Object.keys(p.ratings).filter(id => !stars[id] && p.ratings[id] === -1).map(Number)])].slice(0, 2);
+  const positiveSeeds = [...new Set([...sharedSeeds, ...liked, ...watched.filter(id => !notPositive(id))])].slice(0, 8 - negative.length);
+  const seeds = [...positiveSeeds, ...negative];
+  const ratingWeight = id => stars[id] ? ({1:-8,2:-4,3:0,4:4,5:12}[stars[id]] || 0) : p.ratings[id] === -1 ? -6 : p.ratings[id] === 1 ? 4 : 2;
+  const genreWeight = id => stars[id] ? ({1:-2,2:-1,3:0,4:2,5:4}[stars[id]] || 0) : p.ratings[id] === -1 ? -1.5 : p.ratings[id] === 1 ? 2 : 0.5;
   const genres = p.genres.filter(Number.isSafeInteger);
   const comingOfAge = p.genres.includes('coming-of-age');
   const decades = p.decades;
@@ -147,12 +151,16 @@ async function recommend(value) {
   }
   for (const movie of streamResults) add(movie, 1);
   for (const movie of theaterResults) add(movie, 1);
-  for (let i = 0; i < related.length; i++) for (const movie of related[i].results || []) {
+  for (let i = 0; i < related.length; i++) if (ratingWeight(seeds[i]) > 0) for (const movie of related[i].results || []) {
     if (!wantsStreaming && !theaterIds.has(movie.id)) continue;
-    add(movie, stars[seeds[i]] === 5 ? 12 : liked.includes(seeds[i]) ? 4 : 2, true);
+    add(movie, ratingWeight(seeds[i]), true);
+  }
+  // Downrank overlaps with poorly rated movies without introducing those titles as candidates.
+  for (let i = 0; i < related.length; i++) if (ratingWeight(seeds[i]) < 0) for (const movie of related[i].results || []) {
+    const candidate = map.get(movie.id);if(candidate)candidate.score += ratingWeight(seeds[i]);
   }
   const preferences = {};
-  for (const movie of p.watched) if (!notPositive(movie.id)) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + (stars[movie.id] === 5 ? 4 : 1);
+  for (const movie of p.watched) for (const genre of movie.genre_ids || []) preferences[genre] = (preferences[genre] || 0) + genreWeight(movie.id);
   // Check a mix of genres before spending the remaining request budget on availability.
   const candidateLimit = Math.min(32, Math.max(0, 48 - (wantsStreaming ? streamBranches.length : 0) - (wantsTheaters ? theaterBranches.length + 1 : 0) - seeds.length - (comingOfAge ? 1 : 0)));
   const selectedGenres = [...genres.map(String), ...(comingOfAge ? ['coming-of-age'] : [])];
