@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const blank=()=>({watched:[],saved:[],dismissed:[],genres:[],decades:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
-let recommendationSeen=[], recommendationPage=1;
+let recommendationSeen=[], recommendationPage=1, recommendationRequest=0, preferenceTimer=null, recommendationReady=false, lastPreferenceKey='';
 let profile=blank(), providers=[], genres=[], current=[], currentWarning='', config={}, supabaseClient=null, session=null, searchSeq=0, suggestedSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
 let profileOwner='',loadedAccountId=null;
@@ -27,7 +27,10 @@ function syncProfile(){
   saveQueue=operation.then(()=>{if(session?.user?.id===owner){savedVersion=Math.max(savedVersion,version);if(owner&&saveVersion<=version)try{localStorage.removeItem('nextthree.unsynced.v1.'+owner)}catch(_){}}});
   return saveQueue;
 }
+function preferenceKey(){return JSON.stringify({watched:profile.watched,genres:profile.genres,decades:profile.decades,providers:profile.providers,types:profile.types,ratings:profile.ratings,starRatings:profile.starRatings,dismissed:profile.dismissed})}
+function schedulePreferenceRefresh(){if(!recommendationReady)return;const key=preferenceKey();if(key===lastPreferenceKey)return;lastPreferenceKey=key;recommendationRequest++;$('recommend').disabled=false;$('moreRecommendations').disabled=false;clearTimeout(preferenceTimer);preferenceTimer=setTimeout(()=>{if(profile.types.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater')))recommend(false,{automatic:true});else{current=[];currentWarning='';rememberRecommendations();renderCards();$('recommendStatus').textContent='Choose your preferences to get recommendations.'}},1200)}
 function persist(){
+  schedulePreferenceRefresh();
   if(session?.user?.id&&loadedAccountId===session.user.id)profileOwner=session.user.id;
   try{localStorage.setItem(STORAGE,JSON.stringify(profile));if(profileOwner)localStorage.setItem(OWNER_STORAGE,profileOwner);else localStorage.removeItem(OWNER_STORAGE)}catch(_){}
   if(session&&loadedAccountId===session.user?.id){saveVersion++;try{localStorage.setItem('nextthree.unsynced.v1.'+session.user.id,JSON.stringify(profile))}catch(_){}clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveTimer=null;syncProfile().catch(e=>{$('configWarning').textContent='Could not save your profile to your account. Your changes remain in this browser. '+e.message;$('configWarning').hidden=false})},400)}
@@ -136,19 +139,15 @@ function renderGenres(){
     input.addEventListener('change',()=>{const choice=genre.id==='coming-of-age'?genre.id:Number(genre.id);profile.genres=profile.genres.filter(value=>String(value)!==String(choice));if(input.checked)profile.genres.push(choice);persist()});label.append(input,text);box.append(label)
   }
 }
-async function loadFeatured(){
-  const box=$('featuredPosters');
-  try{
-    const data=await request('/api/featured');
-    const candidates=(data.results||[]).filter(movie=>Number.isSafeInteger(movie.id)&&movie.id>0&&typeof movie.poster_path==='string'&&/^\/[\w-]+\.(jpg|png|webp)$/i.test(movie.poster_path));
-    for(let i=candidates.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[candidates[i],candidates[j]]=[candidates[j],candidates[i]]}
-    box.replaceChildren();
-    for(const movie of candidates.slice(0,50)){
-      const title=movie.title||'Movie',link=el('a',undefined,'featured-poster');link.href='https://www.themoviedb.org/movie/'+movie.id;link.target='_blank';link.rel='noopener noreferrer';link.setAttribute('aria-label','Explore '+title+' on TMDB');
-      const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>{link.remove();if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'))};link.append(poster);box.append(link);
-    }
-    if(!box.children.length)box.append(el('p','Movie posters are unavailable right now.','featured-message'));
-  }catch(_){box.replaceChildren(el('p','Movie posters are unavailable right now.','featured-message')) }
+function renderFeatured(){
+  const box=$('featuredPosters');box.replaceChildren();let count=0;
+  for(const movie of current){
+    const id=Number(movie.id);if(!Number.isSafeInteger(id)||id<=0)continue;
+    const title=movie.title||'Movie',link=el('a',undefined,'featured-poster');link.href='#movie-'+id;link.setAttribute('aria-label','View recommendation for '+title);
+    if(movie.poster_path){const poster=document.createElement('img');poster.src='https://image.tmdb.org/t/p/w185'+movie.poster_path;poster.alt=title+' poster';poster.loading='lazy';poster.onerror=()=>poster.replaceWith(el('span',title,'featured-poster-fallback'));link.append(poster)}else link.append(el('span',title,'featured-poster-fallback'));
+    box.append(link);count++;
+  }
+  if(!count)box.append(el('p','Choose your preferences to see your recommended movies here.','featured-message'));
 }
 let posterAutoPlaying=!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,posterFocused=false,posterTimer=null;
 function advancePosterCarousel(){
@@ -223,9 +222,9 @@ async function searchSuggestions(query,seq){
   }catch(error){if(seq===suggestedSeq)box.replaceChildren(el('p',error.message,'hint'))}
 }
 function renderCards(){
-  const box=$('cards');box.replaceChildren();$('saveRecommendations').disabled=!current.length;
+  const box=$('cards');box.replaceChildren();$('saveRecommendations').disabled=!current.length;renderFeatured();
   for(const movie of current){
-    const card=el('article',undefined,'card');
+    const card=el('article',undefined,'card');card.id='movie-'+Number(movie.id);card.tabIndex=-1;
     if(movie.poster_path){const poster=document.createElement('img');poster.className='poster';poster.alt=movie.title+' poster';poster.src='https://image.tmdb.org/t/p/w500'+movie.poster_path;poster.loading='lazy';poster.onerror=()=>poster.replaceWith(el('div','✦','poster-fallback'));card.append(poster)}
     else card.append(el('div','✦','poster-fallback'));
     const body=el('div',undefined,'card-body');
@@ -259,21 +258,21 @@ function renderCards(){
     body.append(actions,save,remove);card.append(body);box.append(card);
   }
 }
-async function recommend(more=false){
+async function recommend(more=false,{automatic=false}={}){
   if(!profile.watched.length&&!profile.genres.length&&!profile.decades.length&&!profile.types.includes('theater')){$('recommendStatus').textContent='Please add a movie you’ve watched, choose genres or decades, or select In theaters.';return}
   if(!profile.types.length){$('recommendStatus').textContent='Choose at least one viewing option.';return}
-  $('recommend').disabled=true;$('moreRecommendations').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';const ownerAtRequest=profileOwner;
+  clearTimeout(preferenceTimer);const requestId=++recommendationRequest,keyAtRequest=preferenceKey();$('recommend').disabled=true;$('moreRecommendations').disabled=true;$('recommendStatus').textContent='Finding your recommendations…';const ownerAtRequest=profileOwner;
   try{
     const {saved,...preferences}=profile;
     const nextPage=more?Math.min(500,recommendationPage+1):1;
     const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify({...preferences,exclude:more?recommendationSeen:[],page:nextPage})});
-    if(ownerAtRequest!==profileOwner)return;
+    if(ownerAtRequest!==profileOwner||requestId!==recommendationRequest||keyAtRequest!==preferenceKey())return;
     const results=Array.isArray(data.results)?data.results.filter(movie=>!profile.dismissed.includes(Number(movie.id))).slice(0,10):[];
     if(results.length||!more){current=results;recommendationPage=nextPage;recommendationSeen=[...new Set([...(more?recommendationSeen:[]),...results.map(movie=>Number(movie.id))])].slice(-100)}
     const missing=Array.isArray(data.missing_genres)?data.missing_genres.map(id=>id==='coming-of-age'?'Coming of age':(genres.find(genre=>String(genre.id)===String(id))?.name||'Genre '+id)):[];
     currentWarning=[data.warning||'',missing.length?'Not represented: '+missing.join(', ')+'.':''].filter(Boolean).join(' ');rememberRecommendations();renderCards();
-    $('recommendStatus').textContent=[results.length?`Found ${results.length} ${results.length===1?'movie':'movies'} for you.`:(more?'No more matches found. Try changing your preferences.':'No matches found. Try another genre or service.'),currentWarning].filter(Boolean).join(' ');location.hash='discover';
-  }catch(e){$('recommendStatus').textContent=e.message}finally{$('recommend').disabled=false;$('moreRecommendations').disabled=false}
+    $('recommendStatus').textContent=[results.length?`Found ${results.length} ${results.length===1?'movie':'movies'} for you.`:(more?'No more matches found. Try changing your preferences.':'No matches found. Try another genre or service.'),currentWarning].filter(Boolean).join(' ');if(!automatic)location.hash='discover';
+  }catch(e){if(requestId===recommendationRequest)$('recommendStatus').textContent=e.message}finally{if(requestId===recommendationRequest){$('recommend').disabled=false;$('moreRecommendations').disabled=false}}
 }
 function openDialog(){$('authDialog').showModal()}
 function createIdleTracker(onExpire){
@@ -406,7 +405,7 @@ async function init(){
   catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}
   try{await authInit()}catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not initialize sign in. '+e.message}
   if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.';return}
-  loadFeatured();
+  recommendationReady=true;lastPreferenceKey=preferenceKey();if(!current.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater'))&&profile.types.length)recommend(false,{automatic:true});
   try{const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}
   catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not load movie choices. '+e.message}
 }

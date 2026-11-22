@@ -194,3 +194,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .movie-rating{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:2px 0 12px}.movie-rating-score{color:#725018;font-size:14px;font-weight:700;white-space:nowrap}.movie-rating-score:hover{text-decoration:underline}.movie-rating-source{color:#596861;font-size:12px;line-height:1.4}
 
 .mark-watched{border:1px solid #97b5a3;border-radius:8px;background:#e9f2ec;color:#284e37;padding:8px 12px;font-size:12px;font-weight:600}.mark-watched:hover{background:#dcece1}.mark-watched:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
+
+.featured-poster-fallback{display:grid;place-items:center;width:100%;aspect-ratio:2/3;padding:10px;text-align:center;color:#f5e4c4;font-size:12px;line-height:1.35}.card{scroll-margin-top:24px}.card:focus{outline:3px solid #bd8f45;outline-offset:3px}
