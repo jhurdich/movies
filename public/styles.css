@@ -190,3 +190,5 @@ footer{background:#101c25}.foot p{font-size:12px;line-height:1.65}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #bd8f45;outline-offset:3px}
 @media(max-width:760px){.setup,.discover{padding-top:44px}.panel,.saved-panel{padding:22px}.section-intro{gap:14px}.hero-copy{font-size:14px}.results-bar{gap:18px}.result-tools{justify-content:flex-start}.card-body{padding:20px}}
 @media(prefers-reduced-motion:reduce){.button,.head-inner nav a{transition:none}}
+
+.movie-rating{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin:2px 0 12px}.movie-rating-score{color:#725018;font-size:14px;font-weight:700;white-space:nowrap}.movie-rating-score:hover{text-decoration:underline}.movie-rating-source{color:#596861;font-size:12px;line-height:1.4}
