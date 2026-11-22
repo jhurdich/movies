@@ -542,3 +542,15 @@ test('coming-of-age is represented alongside selected genres when available',asy
     assert.equal(data.results.length,10);assert.ok(data.results.some(movie=>movie.id===99));assert.ok(data.results.some(movie=>movie.genre_ids.includes(18)));assert.deepEqual(data.missing_genres,[]);
   }finally{globalThis.fetch=originalFetch}
 });
+
+
+test('recommendation history navigates both directions and filters watched and removed movies',()=>{
+  const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  const code=source.slice(source.indexOf('function showRecommendationPage('),source.indexOf('\nfunction openDialog()',source.indexOf('function showRecommendationPage(')));
+  const elements=new Map(),ctx={profile:{dismissed:[2],watched:[{id:4}]},recommendationPages:[{results:[{id:1},{id:2}],warning:''},{results:[{id:3}],warning:''},{results:[{id:4},{id:5}],warning:''}],pageIndex:2,current:[],currentWarning:'',viewingFirst:false,recommendationRequest:0,preferenceTimer:null,clearTimeout(){},rememberRecommendations(){},renderCards(){},location:{hash:''},$:id=>{if(!elements.has(id))elements.set(id,{disabled:false,textContent:''});return elements.get(id)}};
+  runInNewContext(code+'\nthis.show=showRecommendationPage;',ctx);
+  ctx.show(0);assert.deepEqual(Array.from(ctx.current,m=>m.id),[1]);assert.equal(ctx.pageIndex,0);
+  ctx.show(1);assert.deepEqual(Array.from(ctx.current,m=>m.id),[3]);
+  ctx.show(2);assert.deepEqual(Array.from(ctx.current,m=>m.id),[5]);
+  ctx.show(3);assert.equal(ctx.pageIndex,2);
+});

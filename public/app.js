@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const blank=()=>({watched:[],saved:[],dismissed:[],genres:[],decades:[],providers:[],ratings:{},starRatings:{},types:['flatrate','free','ads'],zipCode:''});
-let firstRecommendations=[], firstWarning='', viewingFirst=true;
+let firstRecommendations=[], firstWarning='', viewingFirst=true, recommendationPages=[], pageIndex=0;
 let recommendationSeen=[], recommendationPage=1, recommendationRequest=0, preferenceTimer=null, recommendationReady=false, lastPreferenceKey='';
 let profile=blank(), providers=[], genres=[], current=[], currentWarning='', config={}, supabaseClient=null, session=null, searchSeq=0, suggestedSeq=0, saveTimer=null;
 let saveQueue=Promise.resolve(), saveVersion=0, savedVersion=0;
@@ -10,9 +10,9 @@ const STORAGE='nextthree.profile.v1', OWNER_STORAGE='nextthree.profileOwner.v1',
 const IDLE_LIMIT=5*60*1000;
 let signingOut=false,idleSignOutPromise=null;
 try { const saved=JSON.parse(localStorage.getItem(STORAGE)); if(saved) profile={...blank(),...saved}; profileOwner=localStorage.getItem(OWNER_STORAGE)||''; } catch (_) {}
-try{const stored=JSON.parse(sessionStorage.getItem(REC_STORAGE)||'null');if(stored&&stored.owner===profileOwner&&Array.isArray(stored.results)){current=stored.results.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10);currentWarning=typeof stored.warning==='string'?stored.warning:'';recommendationSeen=Array.isArray(stored.seen)?stored.seen.filter(id=>Number.isSafeInteger(id)&&id>0).slice(-100):current.map(movie=>Number(movie.id));recommendationPage=Number.isInteger(stored.page)?Math.min(500,Math.max(1,stored.page)):1;firstRecommendations=Array.isArray(stored.first)?stored.first.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10):(recommendationPage===1?[...current]:[]);firstWarning=typeof stored.firstWarning==='string'?stored.firstWarning:currentWarning;viewingFirst=stored.viewingFirst!==false}}catch(_){}
+try{const stored=JSON.parse(sessionStorage.getItem(REC_STORAGE)||'null');if(stored&&stored.owner===profileOwner&&Array.isArray(stored.results)){current=stored.results.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10);currentWarning=typeof stored.warning==='string'?stored.warning:'';recommendationSeen=Array.isArray(stored.seen)?stored.seen.filter(id=>Number.isSafeInteger(id)&&id>0).slice(-100):current.map(movie=>Number(movie.id));recommendationPage=Number.isInteger(stored.page)?Math.min(500,Math.max(1,stored.page)):1;firstRecommendations=Array.isArray(stored.first)?stored.first.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10):(recommendationPage===1?[...current]:[]);firstWarning=typeof stored.firstWarning==='string'?stored.firstWarning:currentWarning;viewingFirst=stored.viewingFirst!==false;if(Array.isArray(stored.pages)&&stored.pages.length){recommendationPages=stored.pages.filter(page=>page&&Array.isArray(page.results)).map(page=>({results:page.results.filter(movie=>movie&&Number.isSafeInteger(Number(movie.id))&&Number(movie.id)>0).slice(0,10),warning:typeof page.warning==='string'?page.warning:''}));pageIndex=Math.max(0,Math.min(recommendationPages.length-1,Number.isInteger(stored.pageIndex)?stored.pageIndex:0))}else if(firstRecommendations.length){recommendationPages=[{results:firstRecommendations,warning:firstWarning}];if(!viewingFirst&&current.length){recommendationPages.push({results:current,warning:currentWarning});pageIndex=1}}else if(current.length)recommendationPages=[{results:current,warning:currentWarning}]}}catch(_){}
 // Do not display a cached signed-in profile if this browser was already idle.
-try{const last=Number(localStorage.getItem(IDLE_PREFIX+profileOwner));if(profileOwner&&last>0&&Date.now()-last>=IDLE_LIMIT){profile=blank();current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationSeen=[];recommendationPage=1}}catch(_){}
+try{const last=Number(localStorage.getItem(IDLE_PREFIX+profileOwner));if(profileOwner&&last>0&&Date.now()-last>=IDLE_LIMIT){profile=blank();current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationPages=[];pageIndex=0;recommendationSeen=[];recommendationPage=1}}catch(_){}
 if(!Array.isArray(profile.saved))profile.saved=[];
 if(!Array.isArray(profile.dismissed))profile.dismissed=[];
 current=current.filter(movie=>!profile.dismissed.includes(Number(movie.id)));firstRecommendations=firstRecommendations.filter(movie=>!profile.dismissed.includes(Number(movie.id)));
@@ -28,15 +28,15 @@ function syncProfile(){
   saveQueue=operation.then(()=>{if(session?.user?.id===owner){savedVersion=Math.max(savedVersion,version);if(owner&&saveVersion<=version)try{localStorage.removeItem('nextthree.unsynced.v1.'+owner)}catch(_){}}});
   return saveQueue;
 }
-function preferenceKey(){return JSON.stringify({watched:profile.watched,genres:profile.genres,decades:profile.decades,providers:profile.providers,types:profile.types,ratings:profile.ratings,starRatings:profile.starRatings,dismissed:profile.dismissed})}
-function schedulePreferenceRefresh(){if(!recommendationReady)return;const key=preferenceKey();if(key===lastPreferenceKey)return;lastPreferenceKey=key;recommendationRequest++;$('recommend').disabled=false;$('moreRecommendations').disabled=false;clearTimeout(preferenceTimer);preferenceTimer=setTimeout(()=>{if(profile.types.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater')))recommend(false,{automatic:true});else{current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationSeen=[];recommendationPage=1;rememberRecommendations();renderCards();$('recommendStatus').textContent='Choose your preferences to get recommendations.'}},1200)}
+function preferenceKey(){return JSON.stringify({watched:profile.watched,genres:profile.genres,decades:profile.decades,providers:profile.providers,types:profile.types,ratings:profile.ratings,starRatings:profile.starRatings})}
+function schedulePreferenceRefresh(){if(!recommendationReady)return;const key=preferenceKey();if(key===lastPreferenceKey)return;lastPreferenceKey=key;recommendationRequest++;$('recommend').disabled=false;$('moreRecommendations').disabled=false;clearTimeout(preferenceTimer);preferenceTimer=setTimeout(()=>{if(profile.types.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater')))recommend(false,{automatic:true});else{current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationPages=[];pageIndex=0;recommendationSeen=[];recommendationPage=1;rememberRecommendations();renderCards();$('recommendStatus').textContent='Choose your preferences to get recommendations.'}},1200)}
 function persist(){
   schedulePreferenceRefresh();
   if(session?.user?.id&&loadedAccountId===session.user.id)profileOwner=session.user.id;
   try{localStorage.setItem(STORAGE,JSON.stringify(profile));if(profileOwner)localStorage.setItem(OWNER_STORAGE,profileOwner);else localStorage.removeItem(OWNER_STORAGE)}catch(_){}
   if(session&&loadedAccountId===session.user?.id){saveVersion++;try{localStorage.setItem('nextthree.unsynced.v1.'+session.user.id,JSON.stringify(profile))}catch(_){}clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveTimer=null;syncProfile().catch(e=>{$('configWarning').textContent='Could not save your profile to your account. Your changes remain in this browser. '+e.message;$('configWarning').hidden=false})},400)}
 }
-function rememberRecommendations(){try{sessionStorage.setItem(REC_STORAGE,JSON.stringify({owner:profileOwner,results:current,warning:currentWarning,seen:recommendationSeen,page:recommendationPage,first:firstRecommendations,firstWarning,viewingFirst}))}catch(_){}}
+function rememberRecommendations(){try{sessionStorage.setItem(REC_STORAGE,JSON.stringify({owner:profileOwner,results:current,warning:currentWarning,seen:recommendationSeen,page:recommendationPage,first:firstRecommendations,firstWarning,viewingFirst,pages:recommendationPages,pageIndex}))}catch(_){}}
 function movieRecord(movie){return {id:Number(movie.id),title:String(movie.title||movie.name||'').slice(0,200),release_date:String(movie.release_date||'').slice(0,20),poster_path:typeof movie.poster_path==='string'?movie.poster_path.slice(0,200):null,overview:typeof movie.overview==='string'?movie.overview.slice(0,3000):'',genre_ids:Array.isArray(movie.genre_ids)?movie.genre_ids:[]}}
 const hydrationAttempted=new WeakSet(), hydrationQueue=[];
 let hydrationActive=0;
@@ -223,7 +223,7 @@ async function searchSuggestions(query,seq){
   }catch(error){if(seq===suggestedSeq)box.replaceChildren(el('p',error.message,'hint'))}
 }
 function renderCards(){
-  const box=$('cards');box.replaceChildren();$('saveRecommendations').disabled=!current.length;$('firstRecommendations').hidden=viewingFirst||!firstRecommendations.length;renderFeatured();
+  const box=$('cards');box.replaceChildren();$('saveRecommendations').disabled=!current.length;$('previousRecommendations').disabled=pageIndex<=0;$('nextRecommendations').disabled=pageIndex>=recommendationPages.length-1;$('recommendationPageStatus').textContent=recommendationPages.length?`Page ${pageIndex+1} of ${recommendationPages.length}`:'';renderFeatured();
   for(const movie of current){
     const card=el('article',undefined,'card');card.id='movie-'+Number(movie.id);card.tabIndex=-1;
     if(movie.poster_path){const poster=document.createElement('img');poster.className='poster';poster.alt=movie.title+' poster';poster.src='https://image.tmdb.org/t/p/w500'+movie.poster_path;poster.loading='lazy';poster.onerror=()=>poster.replaceWith(el('div','✦','poster-fallback'));card.append(poster)}
@@ -271,11 +271,17 @@ async function recommend(more=false,{automatic=false}={}){
     const results=Array.isArray(data.results)?data.results.filter(movie=>!profile.dismissed.includes(Number(movie.id))).slice(0,10):[];
     if(results.length||!more){current=results;recommendationPage=nextPage;viewingFirst=!more;recommendationSeen=[...new Set([...(more?recommendationSeen:[]),...results.map(movie=>Number(movie.id))])].slice(-100)}
     const missing=Array.isArray(data.missing_genres)?data.missing_genres.map(id=>id==='coming-of-age'?'Coming of age':(genres.find(genre=>String(genre.id)===String(id))?.name||'Genre '+id)):[];
-    currentWarning=[data.warning||'',missing.length?'Not represented: '+missing.join(', ')+'.':''].filter(Boolean).join(' ');if(!more){firstRecommendations=[...current];firstWarning=currentWarning}rememberRecommendations();renderCards();
+    currentWarning=[data.warning||'',missing.length?'Not represented: '+missing.join(', ')+'.':''].filter(Boolean).join(' ');if(!more){firstRecommendations=[...current];firstWarning=currentWarning;recommendationPages=current.length?[{results:[...current],warning:currentWarning}]:[];pageIndex=0}else if(results.length){recommendationPages.push({results:[...current],warning:currentWarning});pageIndex=recommendationPages.length-1}rememberRecommendations();renderCards();
     $('recommendStatus').textContent=[results.length?`Found ${results.length} ${results.length===1?'movie':'movies'} for you.`:(more?'No more matches found. Try changing your preferences.':'No matches found. Try another genre or service.'),currentWarning].filter(Boolean).join(' ');if(!automatic)location.hash='discover';
   }catch(e){if(requestId===recommendationRequest)$('recommendStatus').textContent=e.message}finally{if(requestId===recommendationRequest){$('recommend').disabled=false;$('moreRecommendations').disabled=false}}
 }
-function showFirstRecommendations(){recommendationRequest++;clearTimeout(preferenceTimer);$('recommend').disabled=false;$('moreRecommendations').disabled=false;const excluded=new Set([...profile.dismissed,...profile.watched.map(movie=>Number(movie.id))]);current=firstRecommendations.filter(movie=>!excluded.has(Number(movie.id)));currentWarning=firstWarning;viewingFirst=true;rememberRecommendations();renderCards();$('recommendStatus').textContent=[current.length?'Showing your first recommendations.':'No movies remain in your first recommendations.',currentWarning].filter(Boolean).join(' ');location.hash='discover'}
+function showRecommendationPage(index){
+  if(index<0||index>=recommendationPages.length)return;
+  recommendationRequest++;clearTimeout(preferenceTimer);$('recommend').disabled=false;$('moreRecommendations').disabled=false;
+  pageIndex=index;const excluded=new Set([...profile.dismissed,...profile.watched.map(movie=>Number(movie.id))]);
+  current=recommendationPages[index].results.filter(movie=>!excluded.has(Number(movie.id)));currentWarning=recommendationPages[index].warning;viewingFirst=index===0;
+  rememberRecommendations();renderCards();$('recommendStatus').textContent=[current.length?`Showing recommendation page ${index+1}.`:'No movies remain on this page.',currentWarning].filter(Boolean).join(' ');location.hash='discover';
+}
 function openDialog(){$('authDialog').showModal()}
 function createIdleTracker(onExpire){
   let owner='',last=0,timer=null,expired=false;
@@ -312,7 +318,7 @@ function startIdleEvents(){
 function clearAccountView(){
   session=null;saveQueue=Promise.resolve();saveVersion=0;savedVersion=0;profile=blank();profileOwner='';loadedAccountId=null;
   try{localStorage.removeItem(STORAGE);localStorage.removeItem(OWNER_STORAGE)}catch(_){}
-  current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationSeen=[];recommendationPage=1;rememberRecommendations();renderCards();renderWatched();renderSaved();$('saveMessage').textContent='';$('savedStatus').textContent='';renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
+  current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationPages=[];pageIndex=0;recommendationSeen=[];recommendationPage=1;rememberRecommendations();renderCards();renderWatched();renderSaved();$('saveMessage').textContent='';$('savedStatus').textContent='';renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
   $('accountButton').textContent='Sign in';$('recommendStatus').textContent='Add a movie, choose genres or decades, or select In theaters to get started.';
 }
 async function authInit(){
@@ -365,7 +371,7 @@ async function updateAccount(){
       merged.ratings={...profile.ratings,...(pending.ratings||{})};merged.starRatings={...profile.starRatings,...(pending.starRatings||{})};
       profile=merged;$('configWarning').textContent='Recovered unsynced choices from this browser. They will be saved to your account.';$('configWarning').hidden=false;
     }
-    if(profileOwner&&profileOwner!==owner){current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationSeen=[];recommendationPage=1;rememberRecommendations();$('recommendStatus').textContent='Add a movie, choose genres or decades, or select In theaters to get started.'}
+    if(profileOwner&&profileOwner!==owner){current=[];currentWarning='';firstRecommendations=[];firstWarning='';viewingFirst=true;recommendationPages=[];pageIndex=0;recommendationSeen=[];recommendationPage=1;rememberRecommendations();$('recommendStatus').textContent='Add a movie, choose genres or decades, or select In theaters to get started.'}
     current=current.filter(movie=>!profile.dismissed.includes(Number(movie.id)));firstRecommendations=firstRecommendations.filter(movie=>!profile.dismissed.includes(Number(movie.id)));loadedAccountId=owner;persist();rememberRecommendations();renderWatched();renderSaved();renderCards();renderProviders();renderGenres();renderDecades();renderTypes();renderZip();
   }catch(e){$('configWarning').textContent='Could not load your saved profile: '+e.message;$('configWarning').hidden=false}
 }
@@ -398,7 +404,7 @@ $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g
 $('shareMovies').onclick=()=>{updateShareMessage();$('shareDialog').showModal()};$('closeShare').onclick=()=>$('shareDialog').close();$('shareWatched').onchange=updateShareMessage;$('shareRecommended').onchange=updateShareMessage;$('shareText').addEventListener('input',updateShareButtons);$('nativeShare').onclick=shareMovies;$('copyShare').onclick=copyShareMessage;
 const delayedSuggestionSearch=debounce((query,seq)=>searchSuggestions(query,seq),300);
 $('suggestedSearch').addEventListener('input',event=>{const seq=++suggestedSeq,query=event.target.value.trim();$('suggestedResults').replaceChildren();if(query.length>=2)delayedSuggestionSearch(query,seq)});
-$('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=()=>recommend(false);$('moreRecommendations').onclick=()=>recommend(true);$('firstRecommendations').onclick=showFirstRecommendations;$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
+$('search').addEventListener('input',debounce(search,300));$('providerSearch').addEventListener('input',renderProviders);document.querySelectorAll('.type-grid input').forEach(input=>input.onchange=()=>{profile.types=[...document.querySelectorAll('.type-grid input:checked')].map(x=>x.value);persist()});$('recommend').onclick=()=>recommend(false);$('moreRecommendations').onclick=()=>recommend(true);$('previousRecommendations').onclick=()=>showRecommendationPage(pageIndex-1);$('nextRecommendations').onclick=()=>showRecommendationPage(pageIndex+1);$('saveRecommendations').onclick=saveRecommendations;$('accountButton').onclick=async()=>{if(session&&supabaseClient)await signOutAccount();else openDialog()};$('bottomLogin').onclick=()=>session?($('authNote').textContent='You are signed in.',openDialog()):openDialog();$('closeDialog').onclick=()=>$('authDialog').close();$('googleLogin').onclick=()=>login('google');$('facebookLogin').onclick=()=>login('facebook');
 async function init(){
   startIdleEvents();if(profileOwner)idleTracker.start(profileOwner);startPosterAutoplay();renderCards();
   if(current.length)$('recommendStatus').textContent=[`Showing your latest ${current.length} ${current.length===1?'recommendation':'recommendations'}.`,currentWarning].filter(Boolean).join(' ');
