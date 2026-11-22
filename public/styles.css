@@ -196,3 +196,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .mark-watched{border:1px solid #97b5a3;border-radius:8px;background:#e9f2ec;color:#284e37;padding:8px 12px;font-size:12px;font-weight:600}.mark-watched:hover{background:#dcece1}.mark-watched:focus-visible{outline:3px solid #bd8f45;outline-offset:2px}
 
 .featured-poster-fallback{display:grid;place-items:center;width:100%;aspect-ratio:2/3;padding:10px;text-align:center;color:#f5e4c4;font-size:12px;line-height:1.35}.card{scroll-margin-top:24px}.card:focus{outline:3px solid #bd8f45;outline-offset:3px}
+
+/* Film-essay typography: expressive headlines and clear, modern details. */
+:root{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+h1,h2,h3,h4,h5,h6,.card h3,.film-decoration strong,.recommend-bar strong{font-family:'Cormorant Garamond',Georgia,serif;letter-spacing:-.015em;font-weight:600}
+.hero h1{font-family:'Cormorant Garamond',Georgia,serif;font-size:clamp(44px,5.8vw,66px);font-weight:600;letter-spacing:-.025em;line-height:.99}
+.hero h1 em{font-style:italic;font-weight:500}
+.section-intro h2,.ending h2{font-size:clamp(36px,3.8vw,46px);letter-spacing:-.02em;line-height:1.05}
+.panel h3{font-size:21px;font-weight:600;letter-spacing:-.01em}.card h3{font-size:27px;line-height:1.04;letter-spacing:-.01em}.saved-heading h3,.recommend-bar strong{font-size:26px;letter-spacing:-.01em}.dialog-head h2{font-size:35px;line-height:1.05}
+.zoom-controls button,#shareText{font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+@media(max-width:760px){.hero h1{font-size:clamp(40px,10vw,54px)}.section-intro h2,.ending h2{font-size:35px}}
