@@ -193,7 +193,43 @@ async function copyShareMessage(){
   catch(_){$('shareText').focus();$('shareText').select();$('shareStatus').textContent='Select and copy the message, then paste it into a text.'}
 }
 
-let matchedFriendMovies=[], friendMatchSequence=0;
+let matchedFriendMovies=[], friendMatchSequence=0, friendRatings={};
+// Link contains only selected TMDB IDs and ratings, in the URL fragment. No account data is shared.
+function encodeFriendLink(entries,origin){
+  if(!Array.isArray(entries)||!entries.length||entries.length>20)throw new Error('Select between 1 and 20 movies.');
+  return origin+'/#friend='+btoa(JSON.stringify({v:1,m:entries})).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeFriendLink(hash){
+  const encoded=hash.startsWith('#friend=')?hash.slice(8):'';if(!encoded||encoded.length>2500||!/^[A-Za-z0-9_-]+$/.test(encoded))throw new Error('This share link is invalid.');
+  let value;try{const s=encoded.replace(/-/g,'+').replace(/_/g,'/');value=JSON.parse(atob(s+'='.repeat((4-s.length%4)%4)))}catch(_){throw new Error('This share link is invalid.')}
+  if(value?.v!==1||!Array.isArray(value.m)||!value.m.length||value.m.length>20)throw new Error('This share link is invalid.');
+  const seen=new Set();return value.m.map(entry=>{if(!Array.isArray(entry)||entry.length!==2||!Number.isSafeInteger(entry[0])||entry[0]<=0||!Number.isInteger(entry[1])||entry[1]<0||entry[1]>5||seen.has(entry[0]))throw new Error('This share link is invalid.');seen.add(entry[0]);return entry});
+}
+function chooseMoviesForLink(){
+  const box=$('shareMovieChoices');box.replaceChildren();$('friendShareLink').value='';$('copyFriendLink').disabled=true;
+  if(!profile.watched.length){$('friendShareStatus').textContent='Add watched movies first, then select the ones you want to share.';return}
+  for(const movie of profile.watched){const label=el('label',undefined,'friend-share-choice'),check=document.createElement('input');check.type='checkbox';check.value=String(movie.id);label.append(check,document.createTextNode(' '+movie.title+((movie.release_date||'').slice(0,4)?' ('+movie.release_date.slice(0,4)+')':'')+(profile.starRatings[movie.id]?' · '+profile.starRatings[movie.id]+'/5':'')));box.append(label)}
+  $('createFriendLink').hidden=false;$('friendShareStatus').textContent='Choose up to 20 movies, then create your link.';
+}
+function makeFriendLink(){
+  const selected=[...$('shareMovieChoices').querySelectorAll('input:checked')].map(input=>Number(input.value));
+  if(!selected.length||selected.length>20){$('friendShareStatus').textContent='Select between 1 and 20 movies.';return}
+  const entries=selected.map(id=>[id,Number(profile.starRatings[id])||0]);$('friendShareLink').value=encodeFriendLink(entries,location.origin);$('copyFriendLink').disabled=false;$('friendShareStatus').textContent='Link ready. Copy it and send it to your friend.';
+}
+async function copyFriendLink(){try{await navigator.clipboard.writeText($('friendShareLink').value);$('friendShareStatus').textContent='Link copied. Send it to your friend.'}catch(_){$('friendShareLink').focus();$('friendShareLink').select();$('friendShareStatus').textContent='Select and copy the link above.'}}
+async function loadFriendLink(){
+  if(!location.hash.startsWith('#friend='))return;
+  const sequence=++friendMatchSequence,box=$('friendMatches');matchedFriendMovies=[];friendRatings={};box.replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;
+  let entries;try{entries=decodeFriendLink(location.hash)}catch(e){$('togetherStatus').textContent=e.message;return}
+  $('togetherStatus').textContent='Loading your friend’s movies…';
+  const found=await Promise.all(entries.map(async ([id,rating])=>{try{const response=await request('/api/movies/'+id,{signal:AbortSignal.timeout(15000)});return {movie:response.movie,rating}}catch(_){return {movie:null,rating}}}));
+  if(sequence!==friendMatchSequence)return;
+  for(const {movie,rating} of found){if(!movie||!Number.isSafeInteger(Number(movie.id)))continue;const record=movieRecord({...movie,genre_ids:(movie.genres||[]).map(g=>g.id)});matchedFriendMovies.push(record);if(rating)friendRatings[record.id]=rating;box.append(el('p','✓ '+record.title+(record.release_date?' ('+record.release_date.slice(0,4)+')':'')+(rating?' · '+rating+'/5 stars':''),'friend-match'))}
+  const missing=entries.length-matchedFriendMovies.length;$('togetherRecommend').disabled=!matchedFriendMovies.length;
+  $('togetherStatus').textContent=matchedFriendMovies.length?'Ready! '+matchedFriendMovies.length+' shared movies loaded'+(missing?' ('+missing+' could not be loaded)':'')+'. Add your watched movies if needed, then select Find movies for us. Results appear here.':'Could not load the shared movies. Please try the link again.';
+  if(matchedFriendMovies.length){history.replaceState(null,'',location.pathname+location.search+'#together');$('together').scrollIntoView()}
+}
+$('chooseShareMovies').onclick=chooseMoviesForLink;$('createFriendLink').onclick=makeFriendLink;$('copyFriendLink').onclick=copyFriendLink;
 function parseFriendMovieList(text){
   const watchedHeader=text.match(/movies i[’']ve watched:\s*/i);
   if(watchedHeader){const start=watchedHeader.index+watchedHeader[0].length;text=text.slice(start).split(/\n\s*(?:find your own picks:|movies recommended for me:)/i)[0]}
@@ -203,7 +239,7 @@ function parseFriendMovieList(text){
 }
 function normalizeMovieTitle(title){return title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()}
 async function matchFriends(){
-  const sequence=++friendMatchSequence,entries=parseFriendMovieList($('friendMovies').value),box=$('friendMatches');matchedFriendMovies=[];box.replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;
+  const sequence=++friendMatchSequence,entries=parseFriendMovieList($('friendMovies').value),box=$('friendMatches');matchedFriendMovies=[];friendRatings={};box.replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;
   if(!entries.length){$('togetherStatus').textContent='Paste a watched movie list first.';return}
   $('matchFriendMovies').disabled=true;$('togetherStatus').textContent='Finding your friend’s movie titles…';
   try{
@@ -219,9 +255,10 @@ async function recommendTogether(){
   if(!profile.types.length){$('togetherStatus').textContent='Choose at least one viewing option above.';return}
   const sequence=friendMatchSequence,owner=profileOwner,friend=matchedFriendMovies.map(movie=>movieRecord(movie));
   const own=profile.watched.filter(movie=>!profile.starRatings[movie.id]||profile.starRatings[movie.id]>=4).filter(movie=>profile.ratings[movie.id]!==-1);
-  const seeds=[];for(let i=0;i<4;i++){if(own[i])seeds.push(Number(own[i].id));if(friend[i])seeds.push(Number(friend[i].id))}
+  const likedFriend=friend.filter(movie=>!friendRatings[movie.id]||friendRatings[movie.id]>=4);
+  const seeds=[];for(let i=0;i<4;i++){if(own[i])seeds.push(Number(own[i].id));if(likedFriend[i])seeds.push(Number(likedFriend[i].id))}
   const combined=[...friend,...profile.watched].filter((movie,i,all)=>all.findIndex(other=>Number(other.id)===Number(movie.id))===i).slice(0,500);
-  const stars={...profile.starRatings};for(const movie of friend)if(!stars[movie.id])stars[movie.id]=4;
+  const stars={...profile.starRatings};for(const movie of friend)if(!stars[movie.id]&&!profile.ratings[movie.id])stars[movie.id]=friendRatings[movie.id]||3;
   // Recommendations only need movie IDs, genres, and release dates; omit long synopses so large lists stay under the request size limit.
   const compact=combined.map(m=>({id:Number(m.id),genre_ids:m.genre_ids||[],release_date:m.release_date||''}));
   const {saved,...preferences}=profile;const payload={...preferences,watched:compact,starRatings:stars,shared_seed_ids:seeds};
@@ -519,7 +556,7 @@ async function signOutAccount({idle=false}={}){
 }
 
 $('zipCode').addEventListener('input',e=>{const zip=e.target.value.replace(/\D/g,'').slice(0,5);e.target.value=zip;$('zipStatus').textContent=zip&&zip.length<5?('Enter all 5 digits.'+(profile.zipCode?' Your saved ZIP is still in use.':'')):'';if(zip.length===5||zip.length===0){profile.zipCode=zip;persist();renderCards()}});
-$('friendMovies').addEventListener('input',()=>{friendMatchSequence++;matchedFriendMovies=[];$('friendMatches').replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;$('matchFriendMovies').disabled=false;$('togetherStatus').textContent=''});$('matchFriendMovies').onclick=matchFriends;$('togetherRecommend').onclick=recommendTogether;
+$('friendMovies').addEventListener('input',()=>{friendMatchSequence++;matchedFriendMovies=[];friendRatings={};$('friendMatches').replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;$('matchFriendMovies').disabled=false;$('togetherStatus').textContent=''});$('matchFriendMovies').onclick=matchFriends;$('togetherRecommend').onclick=recommendTogether;
 $('shareMovies').onclick=()=>{updateShareMessage();$('shareDialog').showModal()};$('closeShare').onclick=()=>$('shareDialog').close();$('shareWatched').onchange=updateShareMessage;$('shareRecommended').onchange=updateShareMessage;$('shareText').addEventListener('input',updateShareButtons);$('nativeShare').onclick=shareMovies;$('copyShare').onclick=copyShareMessage;
 const delayedSuggestionSearch=debounce((query,seq)=>searchSuggestions(query,seq),300);
 $('suggestedSearch').addEventListener('input',event=>{const seq=++suggestedSeq,query=event.target.value.trim();$('suggestedResults').replaceChildren();if(query.length>=2)delayedSuggestionSearch(query,seq)});
@@ -532,6 +569,7 @@ async function init(){
   catch(e){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Could not connect to the application service. '+e.message;$('googleLogin').disabled=true;$('facebookLogin').disabled=true;return}
   try{await authInit()}catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not initialize sign in. '+e.message}
   if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.';return}
+  await loadFriendLink();
   recommendationReady=true;lastPreferenceKey=preferenceKey();if(!current.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater'))&&profile.types.length)recommend(false,{automatic:true});else if(current.length)fillCarousel();
   try{const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}
   catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not load movie choices. '+e.message}
