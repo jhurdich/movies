@@ -220,8 +220,12 @@ async function loadFriendLink(){
   for(const {movie,rating} of found){if(!movie||!Number.isSafeInteger(Number(movie.id)))continue;const record=movieRecord({...movie,genre_ids:(movie.genres||[]).map(g=>g.id)});matchedFriendMovies.push(record);if(rating)friendRatings[record.id]=rating;box.append(el('p','✓ '+record.title+(record.release_date?' ('+record.release_date.slice(0,4)+')':'')+(rating?' · '+rating+'/5 stars':''),'friend-match'))}
   const missing=entries.length-matchedFriendMovies.length;$('togetherRecommend').disabled=!matchedFriendMovies.length;
   $('togetherStatus').textContent=matchedFriendMovies.length?'Ready! '+matchedFriendMovies.length+' shared movies loaded'+(missing?' ('+missing+' could not be loaded)':'')+'. Add your watched movies if needed, then select Find movies for us. Results appear here.':'Could not load the shared movies. Please try the link again.';
-  showFriendArrival(matchedFriendMovies.length?'Ready! '+matchedFriendMovies.length+' shared movies loaded'+(missing?' ('+missing+' could not be loaded)':'')+'. Select View shared movies to continue.':'Could not load the shared movies. Please try the link again.');
-  if(matchedFriendMovies.length)history.replaceState(null,'',location.pathname+location.search+'#together');
+  if(!matchedFriendMovies.length){showFriendArrival('Could not load the shared movies. Please try the link again.');return}
+  if(!profile.watched.length){showFriendArrival('Your friend’s movies are ready! Add at least one movie you have watched, then choose Find movies for us.');$('togetherStatus').textContent='Your friend’s movies are loaded. Add movies you have watched above, then select Find movies for us.';return}
+  if(!profile.types.length){showFriendArrival('Your friend’s movies are ready! Choose at least one viewing option, then select Find movies for us.');return}
+  showFriendArrival('Your friend’s movies are ready. Finding suggestions for both of you…');
+  await recommendTogether();
+  if(sequence===friendMatchSequence)showFriendArrival($('togetherStatus').textContent+' Select View shared movies to see your results.');
 }
 $('shareMovieChoices').addEventListener('change',()=>{friendLinkSequence++;$('friendShareLink').value='';$('copyFriendLink').disabled=true;$('friendShareStatus').textContent='Selection changed. Select Create link to make a new link.'});$('closeFriendArrival').onclick=()=>$('friendArrivalDialog').close();$('viewFriendMovies').onclick=()=>{$('friendArrivalDialog').close();$('together').scrollIntoView()};$('chooseShareMovies').onclick=chooseMoviesForLink;$('createFriendLink').onclick=makeFriendLink;$('copyFriendLink').onclick=copyFriendLink;
 function parseFriendMovieList(text){
