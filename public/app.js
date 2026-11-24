@@ -262,6 +262,11 @@ function estimateMovieMatch(movie){
 function showMovieMatch(movie){
   const box=$('matchScore');box.replaceChildren();const estimate=estimateMovieMatch(movie);
   const title=el('h3',movie.title+' '+(movie.release_date?'('+movie.release_date.slice(0,4)+')':''));box.append(title);
+  const isSaved=profile.saved.some(item=>Number(item.id)===Number(movie.id));
+  const save=el('button',isSaved?'✓ Saved for later':'☆ Save for later','save-movie');save.type='button';save.disabled=isSaved;
+  const saveStatus=el('p','','saved-status');saveStatus.setAttribute('role','status');
+  save.onclick=()=>{if(profile.saved.some(item=>Number(item.id)===Number(movie.id))){save.disabled=true;save.textContent='✓ Saved for later';return}if(profile.saved.length>=500){saveStatus.textContent='Your saved list is full. Remove a movie to save another.';return}profile.saved.push(movieRecord(movie));persist();renderSaved();renderCards();save.disabled=true;save.textContent='✓ Saved for later';saveStatus.textContent=(movie.title||'Movie')+' saved for later.';};
+  box.append(save,saveStatus);
   if(!estimate){box.append(el('p','Add and rate some watched movies, or choose genres and decades, to get an estimate.','hint'));return}
   const emoji=estimate.score>=8?'😍':estimate.score>=6?'😊':estimate.score>=4?'🤔':estimate.score>=2?'😕':'🙅';
   box.append(el('p',emoji+' '+estimate.score.toFixed(1)+' / 10 estimated match','match-score'),el('p',estimate.features.join(' · '),'hint'),el('p','An estimate based on your profile, not a guarantee. '+(estimate.ratedCount<5?'Rate more watched movies for a more useful estimate.':''),'hint'));
