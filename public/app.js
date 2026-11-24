@@ -193,34 +193,25 @@ async function copyShareMessage(){
   catch(_){$('shareText').focus();$('shareText').select();$('shareStatus').textContent='Select and copy the message, then paste it into a text.'}
 }
 
-let matchedFriendMovies=[], friendMatchSequence=0, friendRatings={};
+let matchedFriendMovies=[], friendMatchSequence=0, friendRatings={}, friendLinkSequence=0;
 // Link contains only selected TMDB IDs and ratings, in the URL fragment. No account data is shared.
-function encodeFriendLink(entries,origin){
-  if(!Array.isArray(entries)||!entries.length||entries.length>20)throw new Error('Select between 1 and 20 movies.');
-  return origin+'/#friend='+btoa(JSON.stringify({v:1,m:entries})).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-}
-function decodeFriendLink(hash){
-  const encoded=hash.startsWith('#friend=')?hash.slice(8):'';if(!encoded||encoded.length>2500||!/^[A-Za-z0-9_-]+$/.test(encoded))throw new Error('This share link is invalid.');
-  let value;try{const s=encoded.replace(/-/g,'+').replace(/_/g,'/');value=JSON.parse(atob(s+'='.repeat((4-s.length%4)%4)))}catch(_){throw new Error('This share link is invalid.')}
-  if(value?.v!==1||!Array.isArray(value.m)||!value.m.length||value.m.length>20)throw new Error('This share link is invalid.');
-  const seen=new Set();return value.m.map(entry=>{if(!Array.isArray(entry)||entry.length!==2||!Number.isSafeInteger(entry[0])||entry[0]<=0||!Number.isInteger(entry[1])||entry[1]<0||entry[1]>5||seen.has(entry[0]))throw new Error('This share link is invalid.');seen.add(entry[0]);return entry});
-}
 function chooseMoviesForLink(){
-  const box=$('shareMovieChoices');box.replaceChildren();$('friendShareLink').value='';$('copyFriendLink').disabled=true;
+  friendLinkSequence++;const box=$('shareMovieChoices');box.replaceChildren();$('friendShareLink').value='';$('copyFriendLink').disabled=true;
   if(!profile.watched.length){$('friendShareStatus').textContent='Add watched movies first, then select the ones you want to share.';return}
-  for(const movie of profile.watched){const label=el('label',undefined,'friend-share-choice'),check=document.createElement('input');check.type='checkbox';check.value=String(movie.id);label.append(check,document.createTextNode(' '+movie.title+((movie.release_date||'').slice(0,4)?' ('+movie.release_date.slice(0,4)+')':'')+(profile.starRatings[movie.id]?' · '+profile.starRatings[movie.id]+'/5':'')));box.append(label)}
-  $('createFriendLink').hidden=false;$('friendShareStatus').textContent='Choose up to 20 movies, then create your link.';
+  let preselected=0;for(const movie of profile.watched){const label=el('label',undefined,'friend-share-choice'),check=document.createElement('input');check.type='checkbox';check.value=String(movie.id);if(Number(profile.starRatings[movie.id])>=4&&preselected<20){check.checked=true;preselected++}label.append(check,document.createTextNode(' '+movie.title+((movie.release_date||'').slice(0,4)?' ('+movie.release_date.slice(0,4)+')':'')+(profile.starRatings[movie.id]?' · '+profile.starRatings[movie.id]+'/5':'')));box.append(label)}
+  $('createFriendLink').hidden=false;if(preselected){$('friendShareStatus').textContent='Your 4- and 5-star movies are selected. Creating your 24-hour link…';makeFriendLink()}else $('friendShareStatus').textContent='No 4- or 5-star movies yet. Rate movies or choose up to 20 below.';
 }
-function makeFriendLink(){
+async function makeFriendLink(){
   const selected=[...$('shareMovieChoices').querySelectorAll('input:checked')].map(input=>Number(input.value));
   if(!selected.length||selected.length>20){$('friendShareStatus').textContent='Select between 1 and 20 movies.';return}
-  const entries=selected.map(id=>[id,Number(profile.starRatings[id])||0]);$('friendShareLink').value=encodeFriendLink(entries,location.origin);$('copyFriendLink').disabled=false;$('friendShareStatus').textContent='Link ready. Copy it and send it to your friend.';
+  const entries=selected.map(id=>[id,Number(profile.starRatings[id])||0]),sequence=++friendLinkSequence;$('createFriendLink').disabled=true;$('copyFriendLink').disabled=true;try{const data=await request('/api/friend-link',{method:'POST',body:JSON.stringify({entries})});if(sequence!==friendLinkSequence)return;$('friendShareLink').value=location.origin+'/#friend='+data.token;$('copyFriendLink').disabled=false;$('friendShareStatus').textContent='Link ready for 24 hours. Copy it and send it to your friend.'}catch(e){if(sequence===friendLinkSequence){$('friendShareLink').value='';$('friendShareStatus').textContent='Could not create a link: '+e.message}}finally{$('createFriendLink').disabled=false}
 }
 async function copyFriendLink(){try{await navigator.clipboard.writeText($('friendShareLink').value);$('friendShareStatus').textContent='Link copied. Send it to your friend.'}catch(_){$('friendShareLink').focus();$('friendShareLink').select();$('friendShareStatus').textContent='Select and copy the link above.'}}
 async function loadFriendLink(){
   if(!location.hash.startsWith('#friend='))return;
   const sequence=++friendMatchSequence,box=$('friendMatches');matchedFriendMovies=[];friendRatings={};box.replaceChildren();$('togetherResults').replaceChildren();$('togetherRecommend').disabled=true;
-  let entries;try{entries=decodeFriendLink(location.hash)}catch(e){$('togetherStatus').textContent=e.message;return}
+  $('togetherStatus').textContent='Checking your friend’s link…';
+  let entries;try{const data=await request('/api/friend-link/resolve',{method:'POST',body:JSON.stringify({token:location.hash.slice(8)})});entries=data.entries}catch(e){$('togetherStatus').textContent=e.message;$('together').scrollIntoView();return}
   $('togetherStatus').textContent='Loading your friend’s movies…';
   const found=await Promise.all(entries.map(async ([id,rating])=>{try{const response=await request('/api/movies/'+id,{signal:AbortSignal.timeout(15000)});return {movie:response.movie,rating}}catch(_){return {movie:null,rating}}}));
   if(sequence!==friendMatchSequence)return;
@@ -229,7 +220,7 @@ async function loadFriendLink(){
   $('togetherStatus').textContent=matchedFriendMovies.length?'Ready! '+matchedFriendMovies.length+' shared movies loaded'+(missing?' ('+missing+' could not be loaded)':'')+'. Add your watched movies if needed, then select Find movies for us. Results appear here.':'Could not load the shared movies. Please try the link again.';
   if(matchedFriendMovies.length){history.replaceState(null,'',location.pathname+location.search+'#together');$('together').scrollIntoView()}
 }
-$('chooseShareMovies').onclick=chooseMoviesForLink;$('createFriendLink').onclick=makeFriendLink;$('copyFriendLink').onclick=copyFriendLink;
+$('shareMovieChoices').addEventListener('change',()=>{friendLinkSequence++;$('friendShareLink').value='';$('copyFriendLink').disabled=true;$('friendShareStatus').textContent='Selection changed. Select Create link to make a new link.'});$('chooseShareMovies').onclick=chooseMoviesForLink;$('createFriendLink').onclick=makeFriendLink;$('copyFriendLink').onclick=copyFriendLink;
 function parseFriendMovieList(text){
   const watchedHeader=text.match(/movies i[’']ve watched:\s*/i);
   if(watchedHeader){const start=watchedHeader.index+watchedHeader[0].length;text=text.slice(start).split(/\n\s*(?:find your own picks:|movies recommended for me:)/i)[0]}
@@ -579,6 +570,7 @@ async function init(){
   try{await authInit()}catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not initialize sign in. '+e.message}
   if(!config.tmdbConfigured){$('featuredPosters').replaceChildren(el('p','Movie posters are unavailable right now.','featured-message'));$('configWarning').hidden=false;$('configWarning').textContent='Movie data is not connected yet. An administrator needs to configure the movie data service.';return}
   await loadFriendLink();
+  chooseMoviesForLink();
   recommendationReady=true;lastPreferenceKey=preferenceKey();if(!current.length&&(profile.watched.length||profile.genres.length||profile.decades.length||profile.types.includes('theater'))&&profile.types.length)recommend(false,{automatic:true});else if(current.length)fillCarousel();
   try{const [gs,ps]=await Promise.all([request('/api/genres'),request('/api/providers')]);genres=gs.genres||[];providers=ps.results||ps.providers||[];renderGenres();renderProviders()}
   catch(e){$('configWarning').hidden=false;$('configWarning').textContent='Could not load movie choices. '+e.message}
