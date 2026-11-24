@@ -236,6 +236,41 @@ function renderZip(){const zip=$('zipCode');zip.value=/^\d{5}$/.test(profile.zip
 function renderTypes(){document.querySelectorAll('.type-grid input').forEach(input=>{input.checked=profile.types.includes(input.value)})}
 function debounce(fn,ms){let timer;return(...args)=>{clearTimeout(timer);timer=setTimeout(()=>fn(...args),ms)}}
 async function search(){const query=$('search').value.trim();const seq=++searchSeq;const box=$('searchResults');box.replaceChildren();if(query.length<2)return;box.append(el('p','Searching…','hint'));try{const data=await request('/api/search?q='+encodeURIComponent(query));if(seq!==searchSeq)return;box.replaceChildren();const results=(data.results||[]).filter(m=>!profile.watched.some(x=>x.id===m.id));if(!results.length){box.append(el('p','No matching movies found.','hint'));return}for(const m of results.slice(0,7)){let b=el('button',`${m.title} ${m.release_date?'('+m.release_date.slice(0,4)+')':''}`,'search-result');b.type='button';b.onclick=()=>{profile.watched.push(m);persist();renderWatched();$('search').value='';box.replaceChildren()};box.append(b)}}catch(e){if(seq!==searchSeq)return;box.replaceChildren(el('p',e.message,'hint'))}}
+let matchSearchSeq=0;
+function estimateMovieMatch(movie){
+  const watched=profile.watched.filter(m=>Number(m.id)!==Number(movie.id));
+  const genresOf=m=>(m.genre_ids||[]).map(String), targetGenres=genresOf(movie), year=Number((movie.release_date||'').slice(0,4));
+  const decade=year?Math.floor(year/10)*10:null;
+  const rated=watched.filter(m=>Number(profile.starRatings[m.id])>=1||profile.ratings[m.id]===1||profile.ratings[m.id]===-1);
+  const features=[];let score=5,weight=0,total=0;
+  for(const m of watched){
+    const stars=Number(profile.starRatings[m.id]);const value=stars?((stars-1)/4)*10:(profile.ratings[m.id]===1?8:profile.ratings[m.id]===-1?2:5.5);
+    const gs=genresOf(m), common=targetGenres.filter(id=>gs.includes(id)).length;
+    const y=Number((m.release_date||'').slice(0,4)),sameDecade=year&&y&&Math.floor(y/10)===Math.floor(year/10);
+    const w=(common*2+(sameDecade?1:0))*(stars||profile.ratings[m.id]?1:.25);if(w){total+=value*w;weight+=w;}
+  }
+  if(weight){score=(total+5*3)/(weight+3);features.push('Your ratings for similar genres and decades');}
+  else if(rated.length)features.push('No rated movies share its known genre or decade');
+  const selected=profile.genres.map(String).filter(x=>x!=='coming-of-age');
+  if(targetGenres.length&&selected.length){const hits=targetGenres.filter(x=>selected.includes(x)).length;score+=hits?Math.min(1.2,hits*.6):-.3;features.push(hits?'Matches your selected genres':'Does not match your selected genres');}
+  if(decade&&profile.decades.length){const hit=profile.decades.includes(decade);score+=hit?.6:-.3;features.push(hit?'Matches a selected decade':'Outside your selected decades');}
+  const already=profile.watched.find(m=>Number(m.id)===Number(movie.id));
+  const own=Number(profile.starRatings[movie.id]);if(already&&own){score=(own-1)*2.5;features.unshift('Based on your own rating for this movie');}
+  if(!watched.length&&!selected.length&&!profile.decades.length&&!own)return null;
+  return {score:Math.max(0,Math.min(10,Math.round(score*10)/10)),features,ratedCount:rated.length};
+}
+function showMovieMatch(movie){
+  const box=$('matchScore');box.replaceChildren();const estimate=estimateMovieMatch(movie);
+  const title=el('h3',movie.title+' '+(movie.release_date?'('+movie.release_date.slice(0,4)+')':''));box.append(title);
+  if(!estimate){box.append(el('p','Add and rate some watched movies, or choose genres and decades, to get an estimate.','hint'));return}
+  const emoji=estimate.score>=8?'😍':estimate.score>=6?'😊':estimate.score>=4?'🤔':estimate.score>=2?'😕':'🙅';
+  box.append(el('p',emoji+' '+estimate.score.toFixed(1)+' / 10 estimated match','match-score'),el('p',estimate.features.join(' · '),'hint'),el('p','An estimate based on your profile, not a guarantee. '+(estimate.ratedCount<5?'Rate more watched movies for a more useful estimate.':''),'hint'));
+}
+async function searchMovieMatch(){
+  const query=$('matchSearch').value.trim(),seq=++matchSearchSeq,box=$('matchResults');box.replaceChildren();$('matchScore').replaceChildren();if(query.length<2)return;
+  box.append(el('p','Searching…','hint'));try{const data=await request('/api/search?q='+encodeURIComponent(query));if(seq!==matchSearchSeq)return;box.replaceChildren();const movies=(data.results||[]).slice(0,8);if(!movies.length){box.append(el('p','No matching movies found.','hint'));return}for(const movie of movies){const button=el('button',movie.title+(movie.release_date?' ('+movie.release_date.slice(0,4)+')':''),'search-result');button.type='button';button.onclick=()=>{box.replaceChildren();$('matchSearch').value=movie.title;showMovieMatch(movie)};box.append(button)}}catch(e){if(seq===matchSearchSeq)box.replaceChildren(el('p',e.message,'hint'))}
+}
+$('matchSearch').addEventListener('input',debounce(searchMovieMatch,300));
 async function searchSuggestions(query,seq){
   const box=$('suggestedResults');
   if(seq!==suggestedSeq)return;
