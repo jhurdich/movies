@@ -190,6 +190,31 @@ export default {
 }
   try {let u=new URL(request.url),p=u.pathname,m=request.method;
    if(p==='/api/config'&&m==='GET')return reply(200,{tmdbConfigured:!!(TMDB_API_KEY||TMDB_READ_TOKEN),supabaseUrl:SUPABASE_URL,supabaseAnonKey:SUPABASE_ANON_KEY,authConfigured:!!(SUPABASE_URL&&SUPABASE_ANON_KEY)});
+   // Signed share tokens expire server-side. The payload remains readable to anyone holding the link.
+   if(p==='/api/friend-link'&&m==='POST'){
+    const secret=env.FRIEND_LINK_SECRET||TMDB_READ_TOKEN||TMDB_API_KEY;if(!secret)throw fail('Sharing is temporarily unavailable.',503);
+    if(Number(request.headers.get('content-length')||0)>4096)throw fail('Share request is too large.',413);
+    const data=await request.json(),entries=data.entries;
+    if(!Array.isArray(entries)||!entries.length||entries.length>20)throw fail('Choose 1 to 20 movies.',400);
+    const seen=new Set();for(const e of entries){if(!Array.isArray(e)||e.length!==2||!Number.isSafeInteger(e[0])||e[0]<=0||!Number.isInteger(e[1])||e[1]<0||e[1]>5||seen.has(e[0]))throw fail('Invalid movie selection.',400);seen.add(e[0])}
+    const payload=btoa(JSON.stringify({v:2,exp:Date.now()+86400000,m:entries})).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+    const sig=new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(payload)));
+    const signature=btoa(String.fromCharCode(...sig)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');return reply(200,{token:payload+'.'+signature});
+   }
+   if(p==='/api/friend-link/resolve'&&m==='POST'){
+    const secret=env.FRIEND_LINK_SECRET||TMDB_READ_TOKEN||TMDB_API_KEY;if(!secret)throw fail('Sharing is temporarily unavailable.',503);
+    if(Number(request.headers.get('content-length')||0)>4096)throw fail('Invalid share link.',400);
+    const {token}=await request.json(),parts=typeof token==='string'?token.split('.'):[];
+    if(parts.length!==2||parts.some(x=>!x||x.length>2500||!/^[A-Za-z0-9_-]+$/.test(x)))throw fail('This share link is invalid or no longer supported.',400);
+    const decode=x=>atob(x.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-x.length%4)%4));
+    let signature,payload;try{signature=Uint8Array.from(decode(parts[1]),c=>c.charCodeAt(0));payload=JSON.parse(decode(parts[0]))}catch(_){throw fail('This share link is invalid.',400)}
+    const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['verify']);
+    if(!await crypto.subtle.verify('HMAC',key,signature,new TextEncoder().encode(parts[0])))throw fail('This share link is invalid.',400);
+    if(payload.v!==2||!Number.isSafeInteger(payload.exp)||!Array.isArray(payload.m)||!payload.m.length||payload.m.length>20)throw fail('This share link is invalid.',400);
+    if(Date.now()>=payload.exp)throw fail('This share link has expired. Ask your friend for a new link.',410);
+    return reply(200,{entries:payload.m});
+   }
    if(p==='/api/search'&&m==='GET'){let q=(u.searchParams.get('q')||'').trim();if(q.length<2)return reply(200,{results:[]});return reply(200,{results:(await tmdb('/search/movie',{query:q.slice(0,100),language:'en-US',include_adult:'false'})).results||[]})}
    if(p==='/api/featured'&&m==='GET'){
   const pages=Array.from({length:10},(_,i)=>i+1);
