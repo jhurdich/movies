@@ -249,6 +249,15 @@ async function matchFriends(){
     $('togetherRecommend').disabled=!matchedFriendMovies.length;$('togetherStatus').textContent=matchedFriendMovies.length?`Matched ${matchedFriendMovies.length} ${matchedFriendMovies.length===1?'movie':'movies'}. Review the matches, then find movies for you both.`:'No titles matched. Check the titles and include release years.';
   }finally{if(sequence===friendMatchSequence)$('matchFriendMovies').disabled=false}
 }
+function togetherShareText(movies,origin){
+  return 'Here are our movie recommendations! 🍿\n\n'+movieListText(movies)+'\n\nFind your own picks: '+origin+'/';
+}
+function appendTogetherShare(box,movies){
+  const text=togetherShareText(movies,location.origin),actions=el('div',undefined,'share-actions'),status=el('p','','saved-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+  const copy=el('button','Copy results','button share-trigger');copy.type='button';copy.onclick=async()=>{try{await navigator.clipboard.writeText(text);status.textContent='Results copied. Paste them into a text to your friend.'}catch(_){const field=el('textarea',undefined,'share-text-fallback');field.value=text;field.rows=8;field.setAttribute('aria-label','Movie results to copy');box.append(field);field.focus();field.select();status.textContent='Select and copy the movie list below.'}};
+  if(typeof navigator.share==='function'){const share=el('button','Share results by text ↗','button primary');share.type='button';share.onclick=async()=>{try{await navigator.share({text});status.textContent='Choose your friend in the share menu and send your message.'}catch(error){if(error.name!=='AbortError')status.textContent='Sharing is unavailable. Use Copy results instead.'}};actions.append(share)}
+  actions.append(copy);box.append(actions,status);
+}
 async function recommendTogether(){
   if(!matchedFriendMovies.length)return;
   if(!profile.watched.length){$('togetherStatus').textContent='Add movies you’ve watched above so we can include your taste too.';return}
@@ -263,7 +272,7 @@ async function recommendTogether(){
   const compact=combined.map(m=>({id:Number(m.id),genre_ids:m.genre_ids||[],release_date:m.release_date||''}));
   const {saved,...preferences}=profile;const payload={...preferences,watched:compact,starRatings:stars,shared_seed_ids:seeds};
   $('togetherRecommend').disabled=true;$('togetherStatus').textContent='Finding movies for you both…';const box=$('togetherResults');box.replaceChildren();
-  try{const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(payload),signal:AbortSignal.timeout(45000)});if(sequence!==friendMatchSequence||owner!==profileOwner)return;const movies=Array.isArray(data.results)?data.results.slice(0,10):[];if(!movies.length){$('togetherStatus').textContent='No shared matches found. '+(data.warning||'Try broader viewing options or fewer genres and decades.');return}box.append(el('h3','Movies for you both'));for(const movie of movies){const row=el('div',undefined,'together-result'),title=el('a',movie.title,'together-title');title.href='https://www.themoviedb.org/movie/'+Number(movie.id);title.target='_blank';title.rel='noopener noreferrer';row.append(title,el('span',(movie.release_date||'').slice(0,4),'saved-year'),el('p',movie.overview||'No synopsis available.'));box.append(row)}$('togetherStatus').textContent=`Found ${movies.length} ${movies.length===1?'movie':'movies'} for you both.`+(data.warning?' '+data.warning:'')}
+  try{const data=await request('/api/recommendations',{method:'POST',body:JSON.stringify(payload),signal:AbortSignal.timeout(45000)});if(sequence!==friendMatchSequence||owner!==profileOwner)return;const movies=Array.isArray(data.results)?data.results.slice(0,10):[];if(!movies.length){$('togetherStatus').textContent='No shared matches found. '+(data.warning||'Try broader viewing options or fewer genres and decades.');return}box.append(el('h3','Movies for you both'));for(const movie of movies){const row=el('div',undefined,'together-result'),title=el('a',movie.title,'together-title');title.href='https://www.themoviedb.org/movie/'+Number(movie.id);title.target='_blank';title.rel='noopener noreferrer';row.append(title,el('span',(movie.release_date||'').slice(0,4),'saved-year'),el('p',movie.overview||'No synopsis available.'));box.append(row)}appendTogetherShare(box,movies);$('togetherStatus').textContent=`Found ${movies.length} ${movies.length===1?'movie':'movies'} for you both.`+(data.warning?' '+data.warning:'')}
   catch(error){if(sequence===friendMatchSequence)$('togetherStatus').textContent=(error.name==='TimeoutError'||error.name==='AbortError')?'Finding movies took too long. Please try again or choose fewer filters.':('Could not load suggestions: '+(error.message||'Please try again.'))}finally{if(sequence===friendMatchSequence)$('togetherRecommend').disabled=false}
 }
 
