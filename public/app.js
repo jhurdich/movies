@@ -237,27 +237,52 @@ function renderTypes(){document.querySelectorAll('.type-grid input').forEach(inp
 function debounce(fn,ms){let timer;return(...args)=>{clearTimeout(timer);timer=setTimeout(()=>fn(...args),ms)}}
 async function search(){const query=$('search').value.trim();const seq=++searchSeq;const box=$('searchResults');box.replaceChildren();if(query.length<2)return;box.append(el('p','Searching…','hint'));try{const data=await request('/api/search?q='+encodeURIComponent(query));if(seq!==searchSeq)return;box.replaceChildren();const results=(data.results||[]).filter(m=>!profile.watched.some(x=>x.id===m.id));if(!results.length){box.append(el('p','No matching movies found.','hint'));return}for(const m of results.slice(0,7)){let b=el('button',`${m.title} ${m.release_date?'('+m.release_date.slice(0,4)+')':''}`,'search-result');b.type='button';b.onclick=()=>{profile.watched.push(m);persist();renderWatched();$('search').value='';box.replaceChildren()};box.append(b)}}catch(e){if(seq!==searchSeq)return;box.replaceChildren(el('p',e.message,'hint'))}}
 let matchSearchSeq=0;
+// Synopsis terms are descriptive clues, not a claim that we understand tone or story.
+const MATCH_STOP_WORDS=new Set('about after again against along also although always another around because before being between both comes could does down during each even every family film finds first from gets having himself herself into just life lives love make many more most movie must never only other over people person their them then there these they this through together under very want wants were what when where which while with would years young'.split(' '));
+const MATCH_THEMES={
+  'coming of age':/\b(coming.of.age|teenager|teenage|high school|adolescen|growing up|young adult)\b/i,
+  'romance':/\b(romance|romantic|fall(s|ing)? in love|relationship|dating|boyfriend|girlfriend)\b/i,
+  'family':/\b(family|mother|father|daughter|son|sister|brother|parent)\b/i,
+  'friendship':/\b(friend|friends|friendship|best friend)\b/i,
+  'grief and loss':/\b(grief|grieving|mourning|death|dying|terminal|loss|died)\b/i,
+  'time travel':/\b(time travel|time loop|future self|past self|relives? the same)\b/i
+};
+function synopsisTokens(text){return new Set((String(text||'').toLowerCase().match(/[a-z]{4,}/g)||[]).filter(w=>!MATCH_STOP_WORDS.has(w)).map(w=>w.endsWith('ing')&&w.length>7?w.slice(0,-3):w.endsWith('s')&&w.length>4?w.slice(0,-1):w));}
+function synopsisThemes(text){return Object.keys(MATCH_THEMES).filter(theme=>MATCH_THEMES[theme].test(String(text||'')));}
 function estimateMovieMatch(movie){
-  const watched=profile.watched.filter(m=>Number(m.id)!==Number(movie.id));
-  const genresOf=m=>(m.genre_ids||[]).map(String), targetGenres=genresOf(movie), year=Number((movie.release_date||'').slice(0,4));
-  const decade=year?Math.floor(year/10)*10:null;
-  const rated=watched.filter(m=>Number(profile.starRatings[m.id])>=1||profile.ratings[m.id]===1||profile.ratings[m.id]===-1);
-  const features=[];let score=5,weight=0,total=0;
-  for(const m of watched){
-    const stars=Number(profile.starRatings[m.id]);const value=stars?((stars-1)/4)*10:(profile.ratings[m.id]===1?8:profile.ratings[m.id]===-1?2:5.5);
-    const gs=genresOf(m), common=targetGenres.filter(id=>gs.includes(id)).length;
-    const y=Number((m.release_date||'').slice(0,4)),sameDecade=year&&y&&Math.floor(y/10)===Math.floor(year/10);
-    const w=(common*2+(sameDecade?1:0))*(stars||profile.ratings[m.id]?1:.25);if(w){total+=value*w;weight+=w;}
+  const genresOf=m=>Array.isArray(m.genre_ids)?m.genre_ids.map(String):[];
+  const targetGenres=genresOf(movie),year=Number((movie.release_date||'').slice(0,4)),decade=year?Math.floor(year/10)*10:null;
+  const targetTokens=synopsisTokens(movie.overview),targetThemes=synopsisThemes(movie.overview);
+  const matched=[],rated=[];
+  for(const m of profile.watched){
+    if(Number(m.id)===Number(movie.id))continue;
+    const stars=Number(profile.starRatings[m.id]),legacy=Number(profile.ratings[m.id]);
+    if(!(stars>=1&&stars<=5)&&legacy!==1&&legacy!==-1)continue;
+    rated.push(m);const value=stars>=1&&stars<=5?(stars-1)*2.5:legacy===1?8:2;
+    const mg=genresOf(m),common=targetGenres.filter(g=>mg.includes(g));
+    const genreSimilarity=targetGenres.length&&mg.length?common.length/Math.max(targetGenres.length,mg.length):0;
+    const themes=synopsisThemes(m.overview).filter(t=>targetThemes.includes(t));
+    const tokens=synopsisTokens(m.overview);let commonWords=0;for(const w of targetTokens)if(tokens.has(w))commonWords++;
+    const textSimilarity=targetTokens.size&&tokens.size?commonWords/Math.sqrt(targetTokens.size*tokens.size):0;
+    const y=Number((m.release_date||'').slice(0,4)),nearYear=year&&y?Math.max(0,1-Math.abs(year-y)/25):0;
+    // Require story or genre evidence; a matching decade alone is not similarity.
+    if(!genreSimilarity&&!themes.length&&!textSimilarity)continue;
+    const similarity=genreSimilarity*1.8+Math.min(themes.length,3)*.65+Math.min(textSimilarity,.5)*2+nearYear*.25;
+    if(similarity>0)matched.push({movie:m,value,similarity,themes,common,textSimilarity});
   }
-  if(weight){score=(total+5*3)/(weight+3);features.push('Your ratings for similar genres and decades');}
-  else if(rated.length)features.push('No rated movies share its known genre or decade');
+  matched.sort((a,b)=>b.similarity-a.similarity);const neighbours=matched.slice(0,20);
+  const ratingWeight=neighbours.reduce((a,b)=>a+b.similarity,0),sum=neighbours.reduce((a,b)=>a+b.value*b.similarity,0);
+  let score=ratingWeight?(sum+5*3)/(ratingWeight+3):5;const features=[];
+  if(neighbours.length){features.push('Compared with '+neighbours.length+' similar rated '+(neighbours.length===1?'movie':'movies'));const themes=[...new Set(neighbours.flatMap(n=>n.themes))].slice(0,3);if(themes.length)features.push('Shared synopsis themes: '+themes.join(', '));if(neighbours.some(n=>n.common.length))features.push('Shared genres');}
   const selected=profile.genres.map(String).filter(x=>x!=='coming-of-age');
-  if(targetGenres.length&&selected.length){const hits=targetGenres.filter(x=>selected.includes(x)).length;score+=hits?Math.min(1.2,hits*.6):-.3;features.push(hits?'Matches your selected genres':'Does not match your selected genres');}
-  if(decade&&profile.decades.length){const hit=profile.decades.includes(decade);score+=hit?.6:-.3;features.push(hit?'Matches a selected decade':'Outside your selected decades');}
-  const already=profile.watched.find(m=>Number(m.id)===Number(movie.id));
-  const own=Number(profile.starRatings[movie.id]);if(already&&own){score=(own-1)*2.5;features.unshift('Based on your own rating for this movie');}
-  if(!watched.length&&!selected.length&&!profile.decades.length&&!own)return null;
-  return {score:Math.max(0,Math.min(10,Math.round(score*10)/10)),features,ratedCount:rated.length};
+  if(targetGenres.length&&selected.length){const hits=targetGenres.filter(x=>selected.includes(x));if(hits.length){score+=Math.min(.6,hits.length*.3);features.push('Matches your selected genres');}}
+  if(profile.genres.includes('coming-of-age')&&targetThemes.includes('coming of age')){score+=.3;features.push('Coming-of-age theme');}
+  if(decade&&profile.decades.includes(decade)){score+=.25;features.push('Matches a selected decade');}
+  const own=Number(profile.starRatings[movie.id]),legacy=Number(profile.ratings[movie.id]);
+  if(own>=1&&own<=5){score=(own-1)*2.5;features.unshift('Your rating for this movie');}
+  else if(legacy===1||legacy===-1){score=legacy===1?8:2;features.unshift('Your earlier like/dislike for this movie');}
+  if(!rated.length&&!selected.length&&!profile.decades.length&&!profile.genres.includes('coming-of-age')&&!own&&!legacy)return null;
+  return {score:Math.max(0,Math.min(10,Math.round(score*10)/10)),features,ratedCount:rated.length,matchCount:neighbours.length,ownRated:!!(own||legacy)};
 }
 function showMovieMatch(movie){
   const box=$('matchScore');box.replaceChildren();const estimate=estimateMovieMatch(movie);
@@ -269,7 +294,7 @@ function showMovieMatch(movie){
   box.append(save,saveStatus);
   if(!estimate){box.append(el('p','Add and rate some watched movies, or choose genres and decades, to get an estimate.','hint'));return}
   const emoji=estimate.score>=8?'😍':estimate.score>=6?'😊':estimate.score>=4?'🤔':estimate.score>=2?'😕':'🙅';
-  box.append(el('p',emoji+' '+estimate.score.toFixed(1)+' / 10 estimated match','match-score'),el('p',estimate.features.join(' · '),'hint'),el('p','An estimate based on your profile, not a guarantee. '+(estimate.ratedCount<5?'Rate more watched movies for a more useful estimate.':''),'hint'));
+  box.append(el('p',emoji+' '+estimate.score.toFixed(1)+' / 10 estimated match','match-score'),el('p',estimate.features.join(' · ')||'Few matching details available; score is close to neutral','hint'),el('p','An estimate based on your profile, not a guarantee. '+(!estimate.ownRated&&estimate.matchCount<3?'Limited evidence: rate more movies to improve the estimate.':'This score is an unvalidated estimate, not a probability.'),'hint'));
 }
 async function searchMovieMatch(){
   const query=$('matchSearch').value.trim(),seq=++matchSearchSeq,box=$('matchResults');box.replaceChildren();$('matchScore').replaceChildren();if(query.length<2)return;
